@@ -9,9 +9,7 @@ struct SwipeToDismissContainer<Content: View>: View {
 
     private let content: Content
 
-    init(
-        @ViewBuilder content: () -> Content
-    ) {
+    init(@ViewBuilder content: () -> Content) {
         self.content = content()
     }
 
@@ -39,17 +37,11 @@ struct SwipeToDismissContainer<Content: View>: View {
                     .gesture(
                         DragGesture(minimumDistance: 10)
                             .onChanged { value in
-                                guard !isDismissing else {
-                                    return
-                                }
+                                guard !isDismissing else { return }
 
-                                let horizontal =
-                                    abs(value.translation.width)
-                                let vertical =
-                                    value.translation.height
+                                let horizontal = abs(value.translation.width)
+                                let vertical = value.translation.height
 
-                                // Реагируем только на свайп вниз,
-                                // преимущественно вертикальный.
                                 guard vertical > 0,
                                       vertical > horizontal * 1.2
                                 else {
@@ -59,21 +51,17 @@ struct SwipeToDismissContainer<Content: View>: View {
                                 verticalOffset = vertical
                             }
                             .onEnded { value in
-                                guard !isDismissing else {
-                                    return
-                                }
+                                guard !isDismissing else { return }
 
-                                let vertical =
-                                    value.translation.height
-                                let horizontal =
-                                    abs(value.translation.width)
+                                let horizontal = abs(value.translation.width)
+                                let vertical = value.translation.height
 
                                 guard vertical > 0,
                                       vertical > horizontal * 1.2
                                 else {
                                     withAnimation(.spring(
-                                        response: 0.35,
-                                        dampingFraction: 0.85
+                                        response: 0.3,
+                                        dampingFraction: 0.86
                                     )) {
                                         verticalOffset = 0
                                     }
@@ -83,16 +71,14 @@ struct SwipeToDismissContainer<Content: View>: View {
                                 let predicted =
                                     value.predictedEndTranslation.height
 
-                                if vertical > 140 ||
-                                    predicted > 280 {
+                                if vertical > 140 || predicted > 280 {
                                     closeReader(
-                                        screenHeight:
-                                            geometry.size.height
+                                        screenHeight: geometry.size.height
                                     )
                                 } else {
                                     withAnimation(.spring(
-                                        response: 0.4,
-                                        dampingFraction: 0.82
+                                        response: 0.3,
+                                        dampingFraction: 0.86
                                     )) {
                                         verticalOffset = 0
                                     }
@@ -109,11 +95,7 @@ struct SwipeToDismissContainer<Content: View>: View {
     }
 
     private var scale: CGFloat {
-        let progress = min(
-            max(verticalOffset / 600, 0),
-            0.18
-        )
-
+        let progress = min(max(verticalOffset / 600, 0), 0.18)
         return 1 - progress
     }
 
@@ -122,23 +104,20 @@ struct SwipeToDismissContainer<Content: View>: View {
     }
 
     private var backgroundOpacity: Double {
-        1 - min(Double(max(verticalOffset, 0) / 500), 0.65)
+        let progress = min(max(verticalOffset / 350, 0), 1)
+        return 1 - progress
     }
 
     private func closeReader(screenHeight: CGFloat) {
-        guard !isDismissing else {
-            return
-        }
-
+        guard !isDismissing else { return }
         isDismissing = true
 
-        withAnimation(.easeOut(duration: 0.22)) {
+        withAnimation(.easeOut(duration: 0.16)) {
             verticalOffset = screenHeight
         }
 
-        DispatchQueue.main.asyncAfter(
-            deadline: .now() + 0.23
-        ) {
+        // Не добавляем дополнительную паузу после анимации.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.17) {
             dismiss()
         }
     }
