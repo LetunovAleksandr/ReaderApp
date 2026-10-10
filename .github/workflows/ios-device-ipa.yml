@@ -39,12 +39,26 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             build
 
+
       - name: Package unsigned IPA
         run: |
-          mkdir -p Payload
-          cp -R build/Build/Products/Release-iphoneos/ReaderApp.app Payload/
-          cd Payload
-          zip -r ../ReaderApp-unsigned.ipa ReaderApp.app
+          set -euo pipefail
+
+          APP_PATH="build/Build/Products/Release-iphoneos/ReaderApp.app"
+
+          test -d "$APP_PATH"
+
+          rm -rf Payload ReaderApp-unsigned.ipa
+          mkdir Payload
+          ditto "$APP_PATH" "Payload/ReaderApp.app"
+
+          test -f "Payload/ReaderApp.app/Info.plist"
+
+          /usr/bin/zip -qry ReaderApp-unsigned.ipa Payload
+
+          echo "IPA contents:"
+          unzip -l ReaderApp-unsigned.ipa | head -40
+      
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
