@@ -1,10 +1,10 @@
-
 import SwiftUI
 import PDFKit
 import UIKit
 
 struct PDFReaderView: View {
     let book: Book
+    let onClose: () -> Void
 
     @State private var document: PDFDocument?
     @State private var currentPage = 0
@@ -21,22 +21,25 @@ struct PDFReaderView: View {
     )
 
     var body: some View {
-        Group {
-            if let document {
-                pageReader(document)
-            } else if loadError {
-                ContentUnavailableView(
-                    "Не удалось открыть PDF",
-                    systemImage: "doc.text",
-                    description: Text("Файл не найден или повреждён.")
-                )
-            } else {
-                ProgressView("Открываем книгу…")
-                    .tint(.white)
+        SwipeToDismissContainer(onDismiss: onClose) {
+            Group {
+                if let document {
+                    pageReader(document)
+                } else if loadError {
+                    ContentUnavailableView(
+                        "Не удалось открыть PDF",
+                        systemImage: "doc.text",
+                        description: Text("Файл не найден или повреждён.")
+                    )
+                } else {
+                    ProgressView("Открываем книгу…")
+                        .tint(.white)
+                }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color.black)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.black.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
         .task {
             loadDocument()
@@ -50,62 +53,62 @@ struct PDFReaderView: View {
     }
 
     private func pageReader(_ document: PDFDocument) -> some View {
-        SwipeToDismissContainer {
-            GeometryReader { geometry in
-                ZStack {
-                    Color.black.ignoresSafeArea()
+        GeometryReader { geometry in
+            ZStack {
+                Color.black
 
-                    TabView(selection: $currentPage) {
-                        ForEach(0..<document.pageCount, id: \.self) { index in
-                            PDFPageView(
-                                document: document,
-                                bookID: book.id,
-                                pageIndex: index,
-                                settings: enhancementSettings,
-                                availableSize: geometry.size
-                            )
-                            .frame(
-                                width: geometry.size.width,
-                                height: geometry.size.height
-                            )
-                            .tag(index)
-                        }
+                TabView(selection: $currentPage) {
+                    ForEach(0..<document.pageCount, id: \.self) { index in
+                        PDFPageView(
+                            document: document,
+                            bookID: book.id,
+                            pageIndex: index,
+                            settings: enhancementSettings,
+                            availableSize: geometry.size
+                        )
+                        .frame(
+                            width: geometry.size.width,
+                            height: geometry.size.height
+                        )
+                        .tag(index)
                     }
-                    .tabViewStyle(.page(indexDisplayMode: .never))
-                    .frame(
-                        width: geometry.size.width,
-                        height: geometry.size.height
-                    )
+                }
+                .tabViewStyle(.page(indexDisplayMode: .never))
+                .frame(
+                    width: geometry.size.width,
+                    height: geometry.size.height
+                )
 
-                    VStack {
-                        Spacer()
+                VStack {
+                    Spacer()
 
-                        Text("\(currentPage + 1) / \(document.pageCount)")
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 8)
-                            .background(.black.opacity(0.7))
-                            .clipShape(Capsule())
-                            .padding(.bottom, 12)
-                            .allowsHitTesting(false)
-                    }
-                    .frame(
-                        width: geometry.size.width,
-                        height: geometry.size.height
-                    )
+                    Text("\(currentPage + 1) / \(document.pageCount)")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(.black.opacity(0.7))
+                        .clipShape(Capsule())
+                        .padding(.bottom, 12)
+                        .allowsHitTesting(false)
                 }
                 .frame(
                     width: geometry.size.width,
                     height: geometry.size.height
                 )
             }
-            .ignoresSafeArea()
+            .frame(
+                width: geometry.size.width,
+                height: geometry.size.height
+            )
         }
+        .ignoresSafeArea()
     }
 
     private func loadDocument() {
-        guard document == nil, !loadError else { return }
+        guard document == nil, !loadError else {
+            return
+        }
 
         let url = storage.fileURL(for: book)
 
@@ -136,9 +139,11 @@ struct PDFReaderView: View {
     }
 
     private func preloadNearbyPages() async {
-        guard let document, document.pageCount > 0 else { return }
+        guard let document, document.pageCount > 0 else {
+            return
+        }
 
-        // Ближайшая страница подготавливается первой.
+        // Подготавливаем ближайшие страницы, чтобы уменьшить задержку при перелистывании.
         let indices = [
             currentPage + 1,
             currentPage - 1,
@@ -147,10 +152,17 @@ struct PDFReaderView: View {
         ]
 
         for index in indices {
-            guard !Task.isCancelled else { return }
-            guard (0..<document.pageCount).contains(index) else { continue }
+            guard !Task.isCancelled else {
+                return
+            }
 
-            guard let page = document.page(at: index) else { continue }
+            guard (0..<document.pageCount).contains(index) else {
+                continue
+            }
+
+            guard let page = document.page(at: index) else {
+                continue
+            }
 
             let key = cacheKey(pageIndex: index)
             let settings = enhancementSettings
@@ -163,11 +175,12 @@ struct PDFReaderView: View {
             }
 
             let bounds = page.bounds(for: .mediaBox)
-            guard bounds.width > 0, bounds.height > 0 else { continue }
+            guard bounds.width > 0, bounds.height > 0 else {
+                continue
+            }
 
             let size = Self.renderSize(for: bounds)
 
-            // Рендеринг и фильтры выполняются вне основного потока.
             _ = await Task.detached(priority: .utility) {
                 PDFPageRenderer.render(
                     page: page,
@@ -201,7 +214,9 @@ struct PDFReaderView: View {
     }
 
     private func saveProgress(_ page: Int) {
-        guard let document, document.pageCount > 0 else { return }
+        guard let document, document.pageCount > 0 else {
+            return
+        }
 
         do {
             var books = try storage.loadLibrary()
@@ -258,7 +273,9 @@ private struct PDFPageView: View {
 
     @MainActor
     private func renderPageIfNeeded() async {
-        guard !isRendering, renderedImage == nil else { return }
+        guard !isRendering, renderedImage == nil else {
+            return
+        }
 
         let key = "pdf-\(bookID.uuidString)-page-\(pageIndex)-1400"
 
@@ -270,10 +287,14 @@ private struct PDFPageView: View {
             return
         }
 
-        guard let page = document.page(at: pageIndex) else { return }
+        guard let page = document.page(at: pageIndex) else {
+            return
+        }
 
         let bounds = page.bounds(for: .mediaBox)
-        guard bounds.width > 0, bounds.height > 0 else { return }
+        guard bounds.width > 0, bounds.height > 0 else {
+            return
+        }
 
         let aspectRatio = bounds.width / bounds.height
         let maxDimension: CGFloat = 1400
@@ -292,7 +313,9 @@ private struct PDFPageView: View {
         }
 
         isRendering = true
-        defer { isRendering = false }
+        defer {
+            isRendering = false
+        }
 
         let settings = settings
 
@@ -305,7 +328,10 @@ private struct PDFPageView: View {
             )
         }.value
 
-        guard !Task.isCancelled else { return }
+        guard !Task.isCancelled else {
+            return
+        }
+
         renderedImage = image
     }
 }
@@ -325,7 +351,9 @@ private enum PDFPageRenderer {
         }
 
         let bounds = page.bounds(for: .mediaBox)
-        guard bounds.width > 0, bounds.height > 0 else { return nil }
+        guard bounds.width > 0, bounds.height > 0 else {
+            return nil
+        }
 
         let renderer = UIGraphicsImageRenderer(size: size)
 

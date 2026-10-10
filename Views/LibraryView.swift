@@ -1,4 +1,3 @@
-
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -6,6 +5,7 @@ struct LibraryView: View {
     @State private var books: [Book] = []
     @State private var isImporterPresented = false
     @State private var errorMessage: String?
+    @State private var selectedPDFBook: Book?
 
     private let storage = BookStorageService()
 
@@ -35,6 +35,14 @@ struct LibraryView: View {
                     bookList
                 }
             }
+            .overlay {
+                if let book = selectedPDFBook {
+                    PDFReaderView(book: book) {
+                        selectedPDFBook = nil
+                    }
+                    .zIndex(1)
+                }
+            }
             .toolbar(.hidden, for: .navigationBar)
             .fileImporter(
                 isPresented: $isImporterPresented,
@@ -46,7 +54,11 @@ struct LibraryView: View {
                 "Ошибка",
                 isPresented: Binding(
                     get: { errorMessage != nil },
-                    set: { if !$0 { errorMessage = nil } }
+                    set: {
+                        if !$0 {
+                            errorMessage = nil
+                        }
+                    }
                 )
             ) {
                 Button("ОК", role: .cancel) {
@@ -85,41 +97,10 @@ struct LibraryView: View {
     private var bookList: some View {
         List {
             ForEach(books) { book in
-                NavigationLink {
-                    if book.format == .pdf {
-                        PDFReaderView(book: book)
-                    } else if book.format == .cbz {
-                        CBZReaderView(book: book)
-                    } else {
-                        ContentUnavailableView(
-                            "Читалка в разработке",
-                            systemImage: "book.closed",
-                            description: Text(
-                                "Поддержка \(book.format.rawValue) появится позже."
-                            )
-                        )
-                    }
-                } label: {
-                    HStack(spacing: 12) {
-                        Image(systemName: "book.closed")
-                            .font(.title2)
-                            .foregroundStyle(.white.opacity(0.8))
-                            .frame(width: 44, height: 56)
-
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text(book.title)
-                                .font(.headline)
-                                .foregroundStyle(.white)
-
-                            Text(book.format.rawValue)
-                                .font(.caption)
-                                .foregroundStyle(.white.opacity(0.6))
-                        }
-                    }
-                }
-                .listRowBackground(
-                    Color(red: 0.10, green: 0.10, blue: 0.11)
-                )
+                bookRow(book)
+                    .listRowBackground(
+                        Color(red: 0.10, green: 0.10, blue: 0.11)
+                    )
             }
             .onDelete(perform: deleteBooks)
 
@@ -129,6 +110,54 @@ struct LibraryView: View {
             }
         }
         .scrollContentBackground(.hidden)
+    }
+
+    @ViewBuilder
+    private func bookRow(_ book: Book) -> some View {
+        if book.format == .pdf {
+            Button {
+                selectedPDFBook = book
+            } label: {
+                bookRowContent(book)
+            }
+            .buttonStyle(.plain)
+        } else {
+            NavigationLink {
+                if book.format == .cbz {
+                    CBZReaderView(book: book)
+                } else {
+                    ContentUnavailableView(
+                        "Читалка в разработке",
+                        systemImage: "book.closed",
+                        description: Text(
+                            "Поддержка \(book.format.rawValue) появится позже."
+                        )
+                    )
+                }
+            } label: {
+                bookRowContent(book)
+            }
+        }
+    }
+
+    private func bookRowContent(_ book: Book) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "book.closed")
+                .font(.title2)
+                .foregroundStyle(.white.opacity(0.8))
+                .frame(width: 44, height: 56)
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text(book.title)
+                    .font(.headline)
+                    .foregroundStyle(.white)
+
+                Text(book.format.rawValue)
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.6))
+            }
+        }
+        .contentShape(Rectangle())
     }
 
     private var addButton: some View {
@@ -150,7 +179,8 @@ struct LibraryView: View {
         do {
             books = try storage.loadLibrary()
         } catch {
-            errorMessage = "Не удалось загрузить библиотеку: \(error.localizedDescription)"
+            errorMessage =
+                "Не удалось загрузить библиотеку: \(error.localizedDescription)"
         }
     }
 
@@ -169,7 +199,8 @@ struct LibraryView: View {
 
                     books.append(book)
                 } catch {
-                    errorMessage = "Не удалось импортировать файл: \(error.localizedDescription)"
+                    errorMessage =
+                        "Не удалось импортировать файл: \(error.localizedDescription)"
                     return
                 }
             }
@@ -187,7 +218,8 @@ struct LibraryView: View {
                 try storage.deleteBook(book, from: books)
                 books.remove(at: index)
             } catch {
-                errorMessage = "Не удалось удалить книгу: \(error.localizedDescription)"
+                errorMessage =
+                    "Не удалось удалить книгу: \(error.localizedDescription)"
                 return
             }
         }

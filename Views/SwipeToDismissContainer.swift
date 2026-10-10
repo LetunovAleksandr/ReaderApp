@@ -1,4 +1,3 @@
-
 import SwiftUI
 
 struct SwipeToDismissContainer<Content: View>: View {
@@ -8,17 +7,21 @@ struct SwipeToDismissContainer<Content: View>: View {
     @State private var isDismissing = false
 
     private let content: Content
+    private let onDismiss: (() -> Void)?
 
-    init(@ViewBuilder content: () -> Content) {
+    init(
+        onDismiss: (() -> Void)? = nil,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.onDismiss = onDismiss
         self.content = content()
     }
 
     var body: some View {
         GeometryReader { geometry in
             ZStack {
-                Color.black
+                Color.clear
                     .ignoresSafeArea()
-                    .opacity(backgroundOpacity)
 
                 content
                     .frame(
@@ -68,10 +71,8 @@ struct SwipeToDismissContainer<Content: View>: View {
                                     return
                                 }
 
-                                let predicted =
-                                    value.predictedEndTranslation.height
-
-                                if vertical > 140 || predicted > 280 {
+                                if vertical > 140 ||
+                                    value.predictedEndTranslation.height > 280 {
                                     closeReader(
                                         screenHeight: geometry.size.height
                                     )
@@ -103,22 +104,20 @@ struct SwipeToDismissContainer<Content: View>: View {
         min(max(verticalOffset / 5, 0), 28)
     }
 
-    private var backgroundOpacity: Double {
-        let progress = min(max(verticalOffset / 350, 0), 1)
-        return 1 - progress
-    }
-
     private func closeReader(screenHeight: CGFloat) {
         guard !isDismissing else { return }
         isDismissing = true
 
-        withAnimation(.easeOut(duration: 0.16)) {
+        withAnimation(.easeOut(duration: 0.18)) {
             verticalOffset = screenHeight
         }
 
-        // Не добавляем дополнительную паузу после анимации.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.17) {
-            dismiss()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
+            if let onDismiss {
+                onDismiss()
+            } else {
+                dismiss()
+            }
         }
     }
 }
