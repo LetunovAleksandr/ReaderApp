@@ -19,6 +19,7 @@ targets:
       - path: App
       - path: Views
       - path: Models
+      - path: Services
 
     settings:
       base:
