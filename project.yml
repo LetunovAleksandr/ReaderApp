@@ -10,10 +10,20 @@ settings:
   base:
     SWIFT_VERSION: "5.0"
 
+packages:
+  ZIPFoundation:
+    url: https://github.com/weichsel/ZIPFoundation.git
+    from: 0.9.19
+
+
 targets:
   ReaderApp:
     type: application
     platform: iOS
+  dependencies:
+    - package: ZIPFoundation
+      product: ZIPFoundation
+
 
     sources:
       - path: App

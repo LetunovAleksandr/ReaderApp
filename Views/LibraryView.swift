@@ -88,12 +88,14 @@ struct LibraryView: View {
                 NavigationLink {
                     if book.format == .pdf {
                         PDFReaderView(book: book)
+                    } else if book.format == .cbz {
+                        CBZReaderView(book: book)
                     } else {
                         ContentUnavailableView(
                             "Читалка в разработке",
                             systemImage: "book.closed",
                             description: Text(
-                                "Поддержка \(book.format.rawValue) появится на следующем этапе."
+                                "Поддержка \(book.format.rawValue) появится позже."
                             )
                         )
                     }
