@@ -1,2 +1,19 @@
 .idea/
 .venv
+
+# Xcode
+*.xcodeproj/
+*.xcworkspace/
+DerivedData/
+build/
+
+# macOS
+.DS_Store
+
+# Swift
+.build/
+.swiftpm/
+
+# Temporary files
+*.log
+*.tmp
