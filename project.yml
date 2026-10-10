@@ -18,6 +18,7 @@ targets:
     sources:
       - path: App
       - path: Views
+      - path: Models
 
     settings:
       base:
