@@ -6,11 +6,12 @@ import UIKit
 struct CBZReaderView: View {
     let book: Book
 
+    @Environment(\.dismiss) private var dismiss
+
     @State private var pages: [URL] = []
     @State private var currentPage = 0
     @State private var isLoading = true
     @State private var errorMessage: String?
-    @Environment(\.dismiss) private var dismiss
 
     private let storage = BookStorageService()
 
@@ -34,10 +35,11 @@ struct CBZReaderView: View {
                     )
                 )
             } else {
-                readerWithBackButton
+                pageReader
             }
         }
-        .background(Color.black)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.black.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
         .task {
             loadPages()
@@ -47,87 +49,107 @@ struct CBZReaderView: View {
         }
     }
 
-    private var readerWithBackButton: some View {
+    private var pageReader: some View {
         GeometryReader { geometry in
-            ZStack(alignment: .topLeading) {
-                pageReader
-                    .frame(
-                        width: geometry.size.width,
-                        height: geometry.size.height
-                    )
+            ZStack {
+                Color.black.ignoresSafeArea()
 
-                Button {
-                    dismiss()
-                } label: {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .frame(width: 44, height: 44)
-                        .background(.black.opacity(0.75))
-                        .clipShape(Circle())
-                        .contentShape(Circle())
+                TabView(selection: $currentPage) {
+                    ForEach(
+                        Array(pages.enumerated()),
+                        id: \.offset
+                    ) { index, url in
+                        GeometryReader { pageGeometry in
+                            if let image = UIImage(
+                                contentsOfFile: url.path
+                            ) {
+                                Image(uiImage: image)
+                                    .resizable()
+                                    .scaledToFit()
+                                    .frame(
+                                        width: pageGeometry.size.width,
+                                        height: pageGeometry.size.height
+                                    )
+                            } else {
+                                ContentUnavailableView(
+                                    "Ошибка изображения",
+                                    systemImage: "photo"
+                                )
+                            }
+                        }
+                        .tag(index)
+                        .background(Color.black)
+                    }
                 }
-                .buttonStyle(.plain)
-                .padding(.leading, 16)
-                .padding(.top, geometry.safeAreaInsets.top + 8)
-                .zIndex(1)
+                .tabViewStyle(
+                    .page(indexDisplayMode: .never)
+                )
+                .frame(
+                    width: geometry.size.width,
+                    height: geometry.size.height
+                )
+
+                VStack {
+                    HStack {
+                        Button {
+                            dismiss()
+                        } label: {
+                            Image(systemName: "chevron.left")
+                                .font(
+                                    .system(
+                                        size: 18,
+                                        weight: .semibold
+                                    )
+                                )
+                                .foregroundStyle(.white)
+                                .frame(width: 44, height: 44)
+                                .background(.black.opacity(0.75))
+                                .clipShape(Circle())
+                        }
+                        .buttonStyle(.plain)
+
+                        Spacer()
+                    }
+
+                    Spacer()
+
+                    Text(
+                        "\(currentPage + 1) / \(pages.count)"
+                    )
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(.black.opacity(0.7))
+                    .clipShape(Capsule())
+                    .padding(.bottom, 12)
+                    .allowsHitTesting(false)
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
             }
             .frame(
                 width: geometry.size.width,
                 height: geometry.size.height
             )
-            .background(Color.black.ignoresSafeArea())
-        }
-        .ignoresSafeArea()
-    }
+            .contentShape(Rectangle())
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 30)
+                    .onEnded { value in
+                        let verticalDistance =
+                            value.translation.height
+                        let horizontalDistance =
+                            value.translation.width
 
-    private var pageReader: some View {
-        ZStack(alignment: .bottom) {
-            Color.black
-                .ignoresSafeArea()
-
-            TabView(selection: $currentPage) {
-                ForEach(
-                    Array(pages.enumerated()),
-                    id: \.offset
-                ) { index, url in
-                    GeometryReader { geometry in
-                        if let image = UIImage(
-                            contentsOfFile: url.path
-                        ) {
-                            Image(uiImage: image)
-                                .resizable()
-                                .scaledToFit()
-                                .frame(
-                                    width: geometry.size.width,
-                                    height: geometry.size.height
-                                )
-                        } else {
-                            ContentUnavailableView(
-                                "Ошибка изображения",
-                                systemImage: "photo"
-                            )
+                        if verticalDistance > 120 &&
+                            verticalDistance >
+                            abs(horizontalDistance) * 1.3 {
+                            dismiss()
                         }
                     }
-                    .tag(index)
-                    .background(Color.black)
-                }
-            }
-            .tabViewStyle(
-                .page(indexDisplayMode: .never)
             )
-            .background(Color.black)
-
-            Text("\(currentPage + 1) / \(pages.count)")
-                .font(.caption.weight(.medium))
-                .foregroundStyle(.white)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(.black.opacity(0.7))
-                .clipShape(Capsule())
-                .padding(.bottom, 12)
-                .allowsHitTesting(false)
         }
+        .ignoresSafeArea()
     }
 
     private func loadPages() {
@@ -210,9 +232,10 @@ struct CBZReaderView: View {
                 ) {
                     currentPage = min(
                         Int(
-                            (savedBook.readingProgress *
-                            Double(max(pages.count - 1, 0)))
-                            .rounded()
+                            (
+                                savedBook.readingProgress *
+                                Double(max(pages.count - 1, 0))
+                            ).rounded()
                         ),
                         max(pages.count - 1, 0)
                     )

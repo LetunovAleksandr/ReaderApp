@@ -46,8 +46,7 @@ struct PDFReaderView: View {
     ) -> some View {
         GeometryReader { geometry in
             ZStack {
-                Color.black
-                    .ignoresSafeArea()
+                Color.black.ignoresSafeArea()
 
                 TabView(selection: $currentPage) {
                     ForEach(
@@ -77,21 +76,17 @@ struct PDFReaderView: View {
                         Button {
                             dismiss()
                         } label: {
-                            Image(
-                                systemName: "chevron.left"
-                            )
-                            .font(
-                                .system(
-                                    size: 18,
-                                    weight: .semibold
+                            Image(systemName: "chevron.left")
+                                .font(
+                                    .system(
+                                        size: 18,
+                                        weight: .semibold
+                                    )
                                 )
-                            )
-                            .foregroundStyle(.white)
-                            .frame(width: 44, height: 44)
-                            .background(
-                                .black.opacity(0.7)
-                            )
-                            .clipShape(Circle())
+                                .foregroundStyle(.white)
+                                .frame(width: 44, height: 44)
+                                .background(.black.opacity(0.75))
+                                .clipShape(Circle())
                         }
                         .buttonStyle(.plain)
 
@@ -113,17 +108,29 @@ struct PDFReaderView: View {
                     .allowsHitTesting(false)
                 }
                 .padding(.horizontal, 16)
-                .padding(
-                    .top,
-                    geometry.safeAreaInsets.top + 8
-                )
+                .padding(.top, 12)
             }
             .frame(
                 width: geometry.size.width,
                 height: geometry.size.height
             )
+            .contentShape(Rectangle())
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 30)
+                    .onEnded { value in
+                        let verticalDistance =
+                            value.translation.height
+                        let horizontalDistance =
+                            value.translation.width
+
+                        if verticalDistance > 120 &&
+                            verticalDistance >
+                            abs(horizontalDistance) * 1.3 {
+                            dismiss()
+                        }
+                    }
+            )
         }
-        .ignoresSafeArea()
     }
 
     private func loadDocument() {
@@ -226,11 +233,8 @@ private struct PDFPageView: View {
 private struct PDFPageRepresentable: UIViewRepresentable {
     let page: PDFPage
 
-    func makeUIView(
-        context: Context
-    ) -> PDFView {
+    func makeUIView(context: Context) -> PDFView {
         let pdfView = PDFView()
-
         pdfView.autoScales = true
         pdfView.displayMode = .singlePage
         pdfView.displayDirection = .vertical
