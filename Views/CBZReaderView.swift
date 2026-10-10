@@ -15,6 +15,14 @@ struct CBZReaderView: View {
 
     private let storage = BookStorageService()
 
+    private let enhancementSettings = ImageEnhancementSettings(
+        enabled: true,
+        contrast: 1.2,
+        brightness: 0.02,
+        saturation: 0.0,
+        sharpness: 0.4
+    )
+
     var body: some View {
         Group {
             if isLoading {
@@ -35,7 +43,9 @@ struct CBZReaderView: View {
                     )
                 )
             } else {
-                pageReader
+                SwipeToDismissContainer {
+                    pageReader
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -60,22 +70,10 @@ struct CBZReaderView: View {
                         id: \.offset
                     ) { index, url in
                         GeometryReader { pageGeometry in
-                            if let image = UIImage(
-                                contentsOfFile: url.path
-                            ) {
-                                Image(uiImage: image)
-                                    .resizable()
-                                    .scaledToFit()
-                                    .frame(
-                                        width: pageGeometry.size.width,
-                                        height: pageGeometry.size.height
-                                    )
-                            } else {
-                                ContentUnavailableView(
-                                    "Ошибка изображения",
-                                    systemImage: "photo"
-                                )
-                            }
+                            pageContent(
+                                at: url,
+                                size: pageGeometry.size
+                            )
                         }
                         .tag(index)
                         .background(Color.black)
@@ -113,17 +111,15 @@ struct CBZReaderView: View {
 
                     Spacer()
 
-                    Text(
-                        "\(currentPage + 1) / \(pages.count)"
-                    )
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .background(.black.opacity(0.7))
-                    .clipShape(Capsule())
-                    .padding(.bottom, 12)
-                    .allowsHitTesting(false)
+                    Text("\(currentPage + 1) / \(pages.count)")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(.black.opacity(0.7))
+                        .clipShape(Capsule())
+                        .padding(.bottom, 12)
+                        .allowsHitTesting(false)
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 12)
@@ -132,24 +128,38 @@ struct CBZReaderView: View {
                 width: geometry.size.width,
                 height: geometry.size.height
             )
-            .contentShape(Rectangle())
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 30)
-                    .onEnded { value in
-                        let verticalDistance =
-                            value.translation.height
-                        let horizontalDistance =
-                            value.translation.width
-
-                        if verticalDistance > 120 &&
-                            verticalDistance >
-                            abs(horizontalDistance) * 1.3 {
-                            dismiss()
-                        }
-                    }
-            )
+            
         }
         .ignoresSafeArea()
+    }
+
+    @ViewBuilder
+    private func pageContent(
+        at url: URL,
+        size: CGSize
+    ) -> some View {
+        if let originalImage = UIImage(
+            contentsOfFile: url.path
+        ) {
+            let enhancedImage =
+                ImageEnhancementService.shared.enhance(
+                    originalImage,
+                    settings: enhancementSettings
+                )
+
+            Image(uiImage: enhancedImage)
+                .resizable()
+                .scaledToFit()
+                .frame(
+                    width: size.width,
+                    height: size.height
+                )
+        } else {
+            ContentUnavailableView(
+                "Ошибка изображения",
+                systemImage: "photo"
+            )
+        }
     }
 
     private func loadPages() {
@@ -268,7 +278,9 @@ struct CBZReaderView: View {
 
             try storage.saveLibrary(books)
         } catch {
-            errorMessage = "Не удалось сохранить прогресс чтения."
+            print(
+                "Не удалось сохранить прогресс CBZ: \(error)"
+            )
         }
     }
 }

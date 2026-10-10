@@ -1,6 +1,7 @@
 
 import SwiftUI
 import PDFKit
+import UIKit
 
 struct PDFReaderView: View {
     let book: Book
@@ -13,10 +14,20 @@ struct PDFReaderView: View {
 
     private let storage = BookStorageService()
 
+    private let enhancementSettings = ImageEnhancementSettings(
+        enabled: true,
+        contrast: 1.2,
+        brightness: 0.02,
+        saturation: 0.0,
+        sharpness: 0.4
+    )
+
     var body: some View {
         Group {
             if let document {
-                pageReader(document)
+                SwipeToDismissContainer {
+                    pageReader(document)
+                }
             } else if loadError {
                 ContentUnavailableView(
                     "Не удалось открыть PDF",
@@ -54,7 +65,8 @@ struct PDFReaderView: View {
                         id: \.self
                     ) { index in
                         PDFPageView(
-                            page: document.page(at: index)
+                            page: document.page(at: index),
+                            settings: enhancementSettings
                         )
                         .frame(
                             width: geometry.size.width,
@@ -114,23 +126,8 @@ struct PDFReaderView: View {
                 width: geometry.size.width,
                 height: geometry.size.height
             )
-            .contentShape(Rectangle())
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 30)
-                    .onEnded { value in
-                        let verticalDistance =
-                            value.translation.height
-                        let horizontalDistance =
-                            value.translation.width
-
-                        if verticalDistance > 120 &&
-                            verticalDistance >
-                            abs(horizontalDistance) * 1.3 {
-                            dismiss()
-                        }
-                    }
-            )
         }
+        .ignoresSafeArea()
     }
 
     private func loadDocument() {
@@ -203,6 +200,7 @@ struct PDFReaderView: View {
 
 private struct PDFPageView: View {
     let page: PDFPage?
+    let settings: ImageEnhancementSettings
 
     var body: some View {
         GeometryReader { geometry in
@@ -210,11 +208,10 @@ private struct PDFPageView: View {
                 Color.black
 
                 if let page {
-                    PDFPageRepresentable(page: page)
-                        .frame(
-                            width: geometry.size.width,
-                            height: geometry.size.height
-                        )
+                    enhancedPage(
+                        page,
+                        size: geometry.size
+                    )
                 } else {
                     ContentUnavailableView(
                         "Страница недоступна",
@@ -228,31 +225,89 @@ private struct PDFPageView: View {
             )
         }
     }
-}
 
-private struct PDFPageRepresentable: UIViewRepresentable {
-    let page: PDFPage
+    @ViewBuilder
+    private func enhancedPage(
+        _ page: PDFPage,
+        size: CGSize
+    ) -> some View {
+        let pageBounds = page.bounds(for: .mediaBox)
+        let pageAspectRatio = pageBounds.width / max(pageBounds.height, 1)
+        let screenAspectRatio = size.width / max(size.height, 1)
 
-    func makeUIView(context: Context) -> PDFView {
-        let pdfView = PDFView()
-        pdfView.autoScales = true
-        pdfView.displayMode = .singlePage
-        pdfView.displayDirection = .vertical
-        pdfView.displaysPageBreaks = false
-        pdfView.backgroundColor = .black
-        pdfView.isUserInteractionEnabled = false
+        let renderSize: CGSize = {
+            if pageAspectRatio > screenAspectRatio {
+                return CGSize(
+                    width: 1800,
+                    height: max(1, 1800 / pageAspectRatio)
+                )
+            } else {
+                return CGSize(
+                    width: max(1, 1800 * pageAspectRatio),
+                    height: 1800
+                )
+            }
+        }()
 
-        let document = PDFDocument()
-        document.insert(page, at: 0)
-        pdfView.document = document
-
-        return pdfView
+        if let image = renderPDFPage(
+            page,
+            size: renderSize
+        ) {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFit()
+                .frame(
+                    width: size.width,
+                    height: size.height
+                )
+        } else {
+            ContentUnavailableView(
+                "Не удалось обработать страницу",
+                systemImage: "doc.text"
+            )
+        }
     }
 
-    func updateUIView(
-        _ pdfView: PDFView,
-        context: Context
-    ) {
-        pdfView.autoScales = true
+    private func renderPDFPage(
+        _ page: PDFPage,
+        size: CGSize
+    ) -> UIImage? {
+        let pageBounds = page.bounds(for: .mediaBox)
+
+        let renderer = UIGraphicsImageRenderer(size: size)
+
+        let originalImage = renderer.image { context in
+            UIColor.white.setFill()
+            context.fill(CGRect(origin: .zero, size: size))
+
+            context.cgContext.saveGState()
+
+            context.cgContext.translateBy(
+                x: 0,
+                y: size.height
+            )
+
+            context.cgContext.scaleBy(
+                x: size.width / pageBounds.width,
+                y: -size.height / pageBounds.height
+            )
+
+            context.cgContext.translateBy(
+                x: -pageBounds.minX,
+                y: -pageBounds.minY
+            )
+
+            page.draw(
+                with: .mediaBox,
+                to: context.cgContext
+            )
+
+            context.cgContext.restoreGState()
+        }
+
+        return ImageEnhancementService.shared.enhance(
+            originalImage,
+            settings: settings
+        )
     }
 }
