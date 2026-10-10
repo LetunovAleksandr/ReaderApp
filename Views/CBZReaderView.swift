@@ -10,6 +10,7 @@ struct CBZReaderView: View {
     @State private var currentPage = 0
     @State private var isLoading = true
     @State private var errorMessage: String?
+    @Environment(\.dismiss) private var dismiss
 
     private let storage = BookStorageService()
 
@@ -33,7 +34,7 @@ struct CBZReaderView: View {
                     )
                 )
             } else {
-                pageReader
+                readerWithBackButton
             }
         }
         .background(Color.black)
@@ -44,6 +45,40 @@ struct CBZReaderView: View {
         .onChange(of: currentPage) { _, newValue in
             saveProgress(newValue)
         }
+    }
+
+    private var readerWithBackButton: some View {
+        GeometryReader { geometry in
+            ZStack(alignment: .topLeading) {
+                pageReader
+                    .frame(
+                        width: geometry.size.width,
+                        height: geometry.size.height
+                    )
+
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 44, height: 44)
+                        .background(.black.opacity(0.75))
+                        .clipShape(Circle())
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .padding(.leading, 16)
+                .padding(.top, geometry.safeAreaInsets.top + 8)
+                .zIndex(1)
+            }
+            .frame(
+                width: geometry.size.width,
+                height: geometry.size.height
+            )
+            .background(Color.black.ignoresSafeArea())
+        }
+        .ignoresSafeArea()
     }
 
     private var pageReader: some View {

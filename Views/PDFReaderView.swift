@@ -5,6 +5,8 @@ import PDFKit
 struct PDFReaderView: View {
     let book: Book
 
+    @Environment(\.dismiss) private var dismiss
+
     @State private var document: PDFDocument?
     @State private var currentPage = 0
     @State private var loadError = false
@@ -28,7 +30,8 @@ struct PDFReaderView: View {
                     .tint(.white)
             }
         }
-        .background(Color.black)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.black.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
         .task {
             loadDocument()
@@ -41,38 +44,86 @@ struct PDFReaderView: View {
     private func pageReader(
         _ document: PDFDocument
     ) -> some View {
-        ZStack(alignment: .bottom) {
-            Color.black
-                .ignoresSafeArea()
+        GeometryReader { geometry in
+            ZStack {
+                Color.black
+                    .ignoresSafeArea()
 
-            TabView(selection: $currentPage) {
-                ForEach(
-                    0..<document.pageCount,
-                    id: \.self
-                ) { index in
-                    PDFPageView(
-                        page: document.page(at: index)
-                    )
-                    .tag(index)
-                    .background(Color.black)
+                TabView(selection: $currentPage) {
+                    ForEach(
+                        0..<document.pageCount,
+                        id: \.self
+                    ) { index in
+                        PDFPageView(
+                            page: document.page(at: index)
+                        )
+                        .frame(
+                            width: geometry.size.width,
+                            height: geometry.size.height
+                        )
+                        .tag(index)
+                    }
                 }
-            }
-            .tabViewStyle(
-                .page(indexDisplayMode: .never)
-            )
+                .tabViewStyle(
+                    .page(indexDisplayMode: .never)
+                )
+                .frame(
+                    width: geometry.size.width,
+                    height: geometry.size.height
+                )
 
-            Text(
-                "\(min(currentPage + 1, document.pageCount)) / \(document.pageCount)"
+                VStack {
+                    HStack {
+                        Button {
+                            dismiss()
+                        } label: {
+                            Image(
+                                systemName: "chevron.left"
+                            )
+                            .font(
+                                .system(
+                                    size: 18,
+                                    weight: .semibold
+                                )
+                            )
+                            .foregroundStyle(.white)
+                            .frame(width: 44, height: 44)
+                            .background(
+                                .black.opacity(0.7)
+                            )
+                            .clipShape(Circle())
+                        }
+                        .buttonStyle(.plain)
+
+                        Spacer()
+                    }
+
+                    Spacer()
+
+                    Text(
+                        "\(currentPage + 1) / \(document.pageCount)"
+                    )
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(.black.opacity(0.7))
+                    .clipShape(Capsule())
+                    .padding(.bottom, 12)
+                    .allowsHitTesting(false)
+                }
+                .padding(.horizontal, 16)
+                .padding(
+                    .top,
+                    geometry.safeAreaInsets.top + 8
+                )
+            }
+            .frame(
+                width: geometry.size.width,
+                height: geometry.size.height
             )
-            .font(.caption.weight(.medium))
-            .foregroundStyle(.white)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-            .background(.black.opacity(0.7))
-            .clipShape(Capsule())
-            .padding(.bottom, 12)
-            .allowsHitTesting(false)
         }
+        .ignoresSafeArea()
     }
 
     private func loadDocument() {
@@ -82,8 +133,10 @@ struct PDFReaderView: View {
 
         let url = storage.fileURL(for: book)
 
-        guard let pdf = PDFDocument(url: url),
-              pdf.pageCount > 0 else {
+        guard
+            let pdf = PDFDocument(url: url),
+            pdf.pageCount > 0
+        else {
             loadError = true
             return
         }
@@ -98,9 +151,10 @@ struct PDFReaderView: View {
             ) {
                 currentPage = min(
                     Int(
-                        (savedBook.readingProgress *
-                        Double(max(pdf.pageCount - 1, 0)))
-                        .rounded()
+                        (
+                            savedBook.readingProgress *
+                            Double(max(pdf.pageCount - 1, 0))
+                        ).rounded()
                     ),
                     pdf.pageCount - 1
                 )
@@ -111,8 +165,10 @@ struct PDFReaderView: View {
     }
 
     private func saveProgress(_ page: Int) {
-        guard let document,
-              document.pageCount > 0 else {
+        guard
+            let document,
+            document.pageCount > 0
+        else {
             return
         }
 
@@ -131,7 +187,9 @@ struct PDFReaderView: View {
 
             try storage.saveLibrary(books)
         } catch {
-            print("Не удалось сохранить прогресс PDF: \(error)")
+            print(
+                "Не удалось сохранить прогресс PDF: \(error)"
+            )
         }
     }
 }
@@ -141,18 +199,26 @@ private struct PDFPageView: View {
 
     var body: some View {
         GeometryReader { geometry in
-            if let page {
-                PDFPageRepresentable(page: page)
-                    .frame(
-                        width: geometry.size.width,
-                        height: geometry.size.height
+            ZStack {
+                Color.black
+
+                if let page {
+                    PDFPageRepresentable(page: page)
+                        .frame(
+                            width: geometry.size.width,
+                            height: geometry.size.height
+                        )
+                } else {
+                    ContentUnavailableView(
+                        "Страница недоступна",
+                        systemImage: "doc.text"
                     )
-            } else {
-                ContentUnavailableView(
-                    "Страница недоступна",
-                    systemImage: "doc.text"
-                )
+                }
             }
+            .frame(
+                width: geometry.size.width,
+                height: geometry.size.height
+            )
         }
     }
 }
@@ -160,28 +226,29 @@ private struct PDFPageView: View {
 private struct PDFPageRepresentable: UIViewRepresentable {
     let page: PDFPage
 
-    func makeUIView(context: Context) -> PDFView {
-        let view = PDFView()
-        view.autoScales = true
-        view.displayMode = .singlePage
-        view.displayDirection = .vertical
-        view.backgroundColor = .black
-        view.isUserInteractionEnabled = false
-        view.document = PDFDocument()
-        view.document?.insert(page, at: 0)
-        return view
+    func makeUIView(
+        context: Context
+    ) -> PDFView {
+        let pdfView = PDFView()
+
+        pdfView.autoScales = true
+        pdfView.displayMode = .singlePage
+        pdfView.displayDirection = .vertical
+        pdfView.displaysPageBreaks = false
+        pdfView.backgroundColor = .black
+        pdfView.isUserInteractionEnabled = false
+
+        let document = PDFDocument()
+        document.insert(page, at: 0)
+        pdfView.document = document
+
+        return pdfView
     }
 
     func updateUIView(
-        _ view: PDFView,
+        _ pdfView: PDFView,
         context: Context
     ) {
-        if view.document?.page(at: 0) !== page {
-            let document = PDFDocument()
-            document.insert(page, at: 0)
-            view.document = document
-        }
-
-        view.autoScales = true
+        pdfView.autoScales = true
     }
 }
