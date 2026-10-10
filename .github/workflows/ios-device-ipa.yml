@@ -1,0 +1,55 @@
+
+name: iOS Device IPA
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build unsigned IPA for iPhone
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build for iPhone
+        run: |
+          xcodebuild \
+            -project ReaderApp.xcodeproj \
+            -scheme ReaderApp \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Package unsigned IPA
+        run: |
+          mkdir -p Payload
+          cp -R build/Build/Products/Release-iphoneos/ReaderApp.app Payload/
+          cd Payload
+          zip -r ../ReaderApp-unsigned.ipa ReaderApp.app
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: ReaderApp-unsigned-IPA
+          path: ReaderApp-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 7
