@@ -7,7 +7,7 @@ struct LibraryView: View {
     @State private var isImporterPresented = false
     @State private var errorMessage: String?
 
-    private let importService = BookImportService()
+    private let storage = BookStorageService()
 
     private var supportedTypes: [UTType] {
         var types: [UTType] = [.pdf]
@@ -43,7 +43,7 @@ struct LibraryView: View {
                 onCompletion: handleImport
             )
             .alert(
-                "Не удалось добавить книгу",
+                "Ошибка",
                 isPresented: Binding(
                     get: { errorMessage != nil },
                     set: { if !$0 { errorMessage = nil } }
@@ -57,6 +57,9 @@ struct LibraryView: View {
             }
         }
         .preferredColorScheme(.dark)
+        .task {
+            loadBooks()
+        }
     }
 
     private var emptyLibrary: some View {
@@ -127,6 +130,14 @@ struct LibraryView: View {
         .padding(.horizontal, 8)
     }
 
+    private func loadBooks() {
+        do {
+            books = try storage.loadLibrary()
+        } catch {
+            errorMessage = "Не удалось загрузить библиотеку: \(error.localizedDescription)"
+        }
+    }
+
     private func handleImport(
         _ result: Result<[URL], Error>
     ) {
@@ -134,25 +145,15 @@ struct LibraryView: View {
         case .success(let urls):
             for url in urls {
                 do {
-                    let hasAccess = url.startAccessingSecurityScopedResource()
-                    defer {
-                        if hasAccess {
-                            url.stopAccessingSecurityScopedResource()
-                        }
-                    }
+                    let book = try storage.importBook(from: url)
 
-                    let book = try importService.makeBook(from: url)
-
-                    guard !books.contains(where: {
-                        $0.fileName == book.fileName &&
-                        $0.format == book.format
-                    }) else {
+                    guard !books.contains(where: { $0.id == book.id }) else {
                         continue
                     }
 
                     books.append(book)
                 } catch {
-                    errorMessage = error.localizedDescription
+                    errorMessage = "Не удалось импортировать файл: \(error.localizedDescription)"
                     return
                 }
             }
@@ -163,7 +164,17 @@ struct LibraryView: View {
     }
 
     private func deleteBooks(at offsets: IndexSet) {
-        books.remove(atOffsets: offsets)
+        for index in offsets.sorted(by: >) {
+            let book = books[index]
+
+            do {
+                try storage.deleteBook(book, from: books)
+                books.remove(at: index)
+            } catch {
+                errorMessage = "Не удалось удалить книгу: \(error.localizedDescription)"
+                return
+            }
+        }
     }
 }
 
