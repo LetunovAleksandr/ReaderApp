@@ -7,6 +7,7 @@ struct CBZReaderView: View {
     let book: Book
 
     @State private var pages: [URL] = []
+    @State private var currentPage = 0
     @State private var isLoading = true
     @State private var errorMessage: String?
 
@@ -32,42 +33,73 @@ struct CBZReaderView: View {
                     )
                 )
             } else {
-                ScrollView {
-                    LazyVStack(spacing: 8) {
-                        ForEach(
-                            Array(pages.enumerated()),
-                            id: \.offset
-                        ) { _, url in
-                            if let uiImage = UIImage(
-                                contentsOfFile: url.path
-                            ) {
-                                Image(uiImage: uiImage)
-                                    .resizable()
-                                    .scaledToFit()
-                                    .frame(maxWidth: .infinity)
-                            }
-                        }
-                    }
-                    .padding(.horizontal, 4)
-                }
-                .background(Color.black)
+                pageReader
             }
         }
-        .background(Color(red: 0.06, green: 0.06, blue: 0.07))
-        .navigationTitle(book.title)
-        .navigationBarTitleDisplayMode(.inline)
+        .background(Color.black)
+        .toolbar(.hidden, for: .navigationBar)
         .task {
             loadPages()
+        }
+        .onChange(of: currentPage) { _, newValue in
+            saveProgress(newValue)
+        }
+    }
+
+    private var pageReader: some View {
+        ZStack(alignment: .bottom) {
+            Color.black
+                .ignoresSafeArea()
+
+            TabView(selection: $currentPage) {
+                ForEach(
+                    Array(pages.enumerated()),
+                    id: \.offset
+                ) { index, url in
+                    GeometryReader { geometry in
+                        if let image = UIImage(
+                            contentsOfFile: url.path
+                        ) {
+                            Image(uiImage: image)
+                                .resizable()
+                                .scaledToFit()
+                                .frame(
+                                    width: geometry.size.width,
+                                    height: geometry.size.height
+                                )
+                        } else {
+                            ContentUnavailableView(
+                                "Ошибка изображения",
+                                systemImage: "photo"
+                            )
+                        }
+                    }
+                    .tag(index)
+                    .background(Color.black)
+                }
+            }
+            .tabViewStyle(
+                .page(indexDisplayMode: .never)
+            )
+            .background(Color.black)
+
+            Text("\(currentPage + 1) / \(pages.count)")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(.black.opacity(0.7))
+                .clipShape(Capsule())
+                .padding(.bottom, 12)
+                .allowsHitTesting(false)
         }
     }
 
     private func loadPages() {
-        guard isLoading else { return }
-
         do {
             let archiveURL = storage.fileURL(for: book)
-
             let fileManager = FileManager.default
+
             let cacheDirectory = fileManager.urls(
                 for: .cachesDirectory,
                 in: .userDomainMask
@@ -79,7 +111,9 @@ struct CBZReaderView: View {
                     isDirectory: true
                 )
 
-            try? fileManager.removeItem(at: extractionDirectory)
+            try? fileManager.removeItem(
+                at: extractionDirectory
+            )
 
             try fileManager.createDirectory(
                 at: extractionDirectory,
@@ -94,20 +128,22 @@ struct CBZReaderView: View {
             }
 
             let imageExtensions: Set<String> = [
-                "jpg", "jpeg", "png", "gif", "bmp", "tif", "tiff"
+                "jpg", "jpeg", "png", "gif",
+                "bmp", "tif", "tiff", "webp"
             ]
 
-            let entries = archive.filter { entry in
-                entry.type == .file &&
-                imageExtensions.contains(
-                    URL(fileURLWithPath: entry.path)
-                        .pathExtension.lowercased()
-                )
-            }
-            .sorted {
-                $0.path.localizedStandardCompare($1.path)
-                    == .orderedAscending
-            }
+            let entries = archive
+                .filter { entry in
+                    entry.type == .file &&
+                    imageExtensions.contains(
+                        URL(fileURLWithPath: entry.path)
+                            .pathExtension.lowercased()
+                    )
+                }
+                .sorted {
+                    $0.path.localizedStandardCompare($1.path)
+                        == .orderedAscending
+                }
 
             var extractedPages: [URL] = []
 
@@ -130,10 +166,51 @@ struct CBZReaderView: View {
             }
 
             pages = extractedPages
+
+            if !extractedPages.isEmpty {
+                let savedBooks = try storage.loadLibrary()
+
+                if let savedBook = savedBooks.first(
+                    where: { $0.id == book.id }
+                ) {
+                    currentPage = min(
+                        Int(
+                            (savedBook.readingProgress *
+                            Double(max(pages.count - 1, 0)))
+                            .rounded()
+                        ),
+                        max(pages.count - 1, 0)
+                    )
+                }
+            }
+
             isLoading = false
         } catch {
             errorMessage = error.localizedDescription
             isLoading = false
+        }
+    }
+
+    private func saveProgress(_ page: Int) {
+        guard !isLoading, !pages.isEmpty else {
+            return
+        }
+
+        do {
+            var books = try storage.loadLibrary()
+
+            guard let index = books.firstIndex(
+                where: { $0.id == book.id }
+            ) else {
+                return
+            }
+
+            books[index].readingProgress =
+                Double(page) / Double(max(pages.count - 1, 1))
+
+            try storage.saveLibrary(books)
+        } catch {
+            errorMessage = "Не удалось сохранить прогресс чтения."
         }
     }
 }
@@ -142,19 +219,6 @@ private enum CBZError: LocalizedError {
     case invalidArchive
 
     var errorDescription: String? {
-        "Файл не удалось прочитать как CBZ-архив."
+        "Не удалось прочитать CBZ-архив."
     }
-}
-
-#Preview {
-    NavigationStack {
-        CBZReaderView(
-            book: Book(
-                title: "Пример манги",
-                fileName: "example.cbz",
-                format: .cbz
-            )
-        )
-    }
-    .preferredColorScheme(.dark)
 }
