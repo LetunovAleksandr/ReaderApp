@@ -23,6 +23,11 @@ struct BookStorageService {
         rootDirectory.appendingPathComponent("library.json")
     }
 
+    func fileURL(for book: Book) -> URL {
+        booksDirectory.appendingPathComponent(book.fileName)
+    }
+
+
     init() {
         try? fileManager.createDirectory(
             at: booksDirectory,

@@ -85,20 +85,34 @@ struct LibraryView: View {
     private var bookList: some View {
         List {
             ForEach(books) { book in
-                HStack(spacing: 12) {
-                    Image(systemName: "book.closed")
-                        .font(.title2)
-                        .foregroundStyle(.white.opacity(0.8))
-                        .frame(width: 44, height: 56)
+                NavigationLink {
+                    if book.format == .pdf {
+                        PDFReaderView(book: book)
+                    } else {
+                        ContentUnavailableView(
+                            "Читалка в разработке",
+                            systemImage: "book.closed",
+                            description: Text(
+                                "Поддержка \(book.format.rawValue) появится на следующем этапе."
+                            )
+                        )
+                    }
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "book.closed")
+                            .font(.title2)
+                            .foregroundStyle(.white.opacity(0.8))
+                            .frame(width: 44, height: 56)
 
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text(book.title)
-                            .font(.headline)
-                            .foregroundStyle(.white)
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text(book.title)
+                                .font(.headline)
+                                .foregroundStyle(.white)
 
-                        Text(book.format.rawValue)
-                            .font(.caption)
-                            .foregroundStyle(.white.opacity(0.6))
+                            Text(book.format.rawValue)
+                                .font(.caption)
+                                .foregroundStyle(.white.opacity(0.6))
+                        }
                     }
                 }
                 .listRowBackground(
