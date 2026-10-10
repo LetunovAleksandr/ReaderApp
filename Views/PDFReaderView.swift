@@ -25,9 +25,7 @@ struct PDFReaderView: View {
     var body: some View {
         Group {
             if let document {
-                SwipeToDismissContainer {
-                    pageReader(document)
-                }
+                pageReader(document)
             } else if loadError {
                 ContentUnavailableView(
                     "Не удалось открыть PDF",
@@ -55,79 +53,83 @@ struct PDFReaderView: View {
     private func pageReader(
         _ document: PDFDocument
     ) -> some View {
-        GeometryReader { geometry in
-            ZStack {
-                Color.black.ignoresSafeArea()
+        SwipeToDismissContainer {
+            GeometryReader { geometry in
+                ZStack {
+                    Color.black.ignoresSafeArea()
 
-                TabView(selection: $currentPage) {
-                    ForEach(
-                        0..<document.pageCount,
-                        id: \.self
-                    ) { index in
-                        PDFPageView(
-                            page: document.page(at: index),
-                            settings: enhancementSettings
-                        )
-                        .frame(
-                            width: geometry.size.width,
-                            height: geometry.size.height
-                        )
-                        .tag(index)
+                    TabView(selection: $currentPage) {
+                        ForEach(
+                            0..<document.pageCount,
+                            id: \.self
+                        ) { index in
+                            PDFPageView(
+                                document: document,
+                                bookID: book.id,
+                                pageIndex: index,
+                                settings: enhancementSettings
+                            )
+                            .frame(
+                                width: geometry.size.width,
+                                height: geometry.size.height
+                            )
+                            .tag(index)
+                        }
                     }
+                    .tabViewStyle(
+                        .page(indexDisplayMode: .never)
+                    )
+                    .frame(
+                        width: geometry.size.width,
+                        height: geometry.size.height
+                    )
+
+                    VStack {
+                        HStack {
+                            Button {
+                                dismiss()
+                            } label: {
+                                Image(systemName: "chevron.left")
+                                    .font(
+                                        .system(
+                                            size: 18,
+                                            weight: .semibold
+                                        )
+                                    )
+                                    .foregroundStyle(.white)
+                                    .frame(width: 44, height: 44)
+                                    .background(.black.opacity(0.75))
+                                    .clipShape(Circle())
+                            }
+                            .buttonStyle(.plain)
+
+                            Spacer()
+                        }
+
+                        Spacer()
+
+                        Text(
+                            "\(currentPage + 1) / \(document.pageCount)"
+                        )
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(.black.opacity(0.7))
+                        .clipShape(Capsule())
+                        .padding(.bottom, 12)
+                        .allowsHitTesting(false)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 12)
                 }
-                .tabViewStyle(
-                    .page(indexDisplayMode: .never)
-                )
                 .frame(
                     width: geometry.size.width,
                     height: geometry.size.height
                 )
-
-                VStack {
-                    HStack {
-                        Button {
-                            dismiss()
-                        } label: {
-                            Image(systemName: "chevron.left")
-                                .font(
-                                    .system(
-                                        size: 18,
-                                        weight: .semibold
-                                    )
-                                )
-                                .foregroundStyle(.white)
-                                .frame(width: 44, height: 44)
-                                .background(.black.opacity(0.75))
-                                .clipShape(Circle())
-                        }
-                        .buttonStyle(.plain)
-
-                        Spacer()
-                    }
-
-                    Spacer()
-
-                    Text(
-                        "\(currentPage + 1) / \(document.pageCount)"
-                    )
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .background(.black.opacity(0.7))
-                    .clipShape(Capsule())
-                    .padding(.bottom, 12)
-                    .allowsHitTesting(false)
-                }
-                .padding(.horizontal, 16)
-                .padding(.top, 12)
             }
-            .frame(
-                width: geometry.size.width,
-                height: geometry.size.height
-            )
+            .ignoresSafeArea()
         }
-        .ignoresSafeArea()
     }
 
     private func loadDocument() {
@@ -145,27 +147,32 @@ struct PDFReaderView: View {
             return
         }
 
-        document = pdf
-
         do {
             let books = try storage.loadLibrary()
 
             if let savedBook = books.first(
                 where: { $0.id == book.id }
             ) {
+                let lastPage = pdf.pageCount - 1
+
                 currentPage = min(
-                    Int(
-                        (
-                            savedBook.readingProgress *
-                            Double(max(pdf.pageCount - 1, 0))
-                        ).rounded()
+                    max(
+                        Int(
+                            (
+                                savedBook.readingProgress *
+                                Double(lastPage)
+                            ).rounded()
+                        ),
+                        0
                     ),
-                    pdf.pageCount - 1
+                    lastPage
                 )
             }
         } catch {
             currentPage = 0
         }
+
+        document = pdf
     }
 
     private func saveProgress(_ page: Int) {
@@ -199,115 +206,141 @@ struct PDFReaderView: View {
 }
 
 private struct PDFPageView: View {
-    let page: PDFPage?
+    let document: PDFDocument
+    let bookID: UUID
+    let pageIndex: Int
     let settings: ImageEnhancementSettings
+
+    @State private var renderedImage: UIImage?
+    @State private var isRendering = false
 
     var body: some View {
         GeometryReader { geometry in
             ZStack {
                 Color.black
 
-                if let page {
-                    enhancedPage(
-                        page,
-                        size: geometry.size
-                    )
-                } else {
-                    ContentUnavailableView(
-                        "Страница недоступна",
-                        systemImage: "doc.text"
-                    )
+                if let renderedImage {
+                    Image(uiImage: renderedImage)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(
+                            width: geometry.size.width,
+                            height: geometry.size.height
+                        )
+                } else if isRendering {
+                    ProgressView()
+                        .tint(.white)
                 }
             }
             .frame(
                 width: geometry.size.width,
                 height: geometry.size.height
             )
-        }
-    }
-
-    @ViewBuilder
-    private func enhancedPage(
-        _ page: PDFPage,
-        size: CGSize
-    ) -> some View {
-        let pageBounds = page.bounds(for: .mediaBox)
-        let pageAspectRatio = pageBounds.width / max(pageBounds.height, 1)
-        let screenAspectRatio = size.width / max(size.height, 1)
-
-        let renderSize: CGSize = {
-            if pageAspectRatio > screenAspectRatio {
-                return CGSize(
-                    width: 1800,
-                    height: max(1, 1800 / pageAspectRatio)
-                )
-            } else {
-                return CGSize(
-                    width: max(1, 1800 * pageAspectRatio),
-                    height: 1800
-                )
+            .task(id: pageIndex) {
+                await renderPageIfNeeded()
             }
-        }()
-
-        if let image = renderPDFPage(
-            page,
-            size: renderSize
-        ) {
-            Image(uiImage: image)
-                .resizable()
-                .scaledToFit()
-                .frame(
-                    width: size.width,
-                    height: size.height
-                )
-        } else {
-            ContentUnavailableView(
-                "Не удалось обработать страницу",
-                systemImage: "doc.text"
-            )
         }
     }
 
-    private func renderPDFPage(
-        _ page: PDFPage,
-        size: CGSize
-    ) -> UIImage? {
-        let pageBounds = page.bounds(for: .mediaBox)
-
-        let renderer = UIGraphicsImageRenderer(size: size)
-
-        let originalImage = renderer.image { context in
-            UIColor.white.setFill()
-            context.fill(CGRect(origin: .zero, size: size))
-
-            context.cgContext.saveGState()
-
-            context.cgContext.translateBy(
-                x: 0,
-                y: size.height
-            )
-
-            context.cgContext.scaleBy(
-                x: size.width / pageBounds.width,
-                y: -size.height / pageBounds.height
-            )
-
-            context.cgContext.translateBy(
-                x: -pageBounds.minX,
-                y: -pageBounds.minY
-            )
-
-            page.draw(
-                with: .mediaBox,
-                to: context.cgContext
-            )
-
-            context.cgContext.restoreGState()
+    @MainActor
+    private func renderPageIfNeeded() async {
+        guard !isRendering, renderedImage == nil else {
+            return
         }
 
-        return ImageEnhancementService.shared.enhance(
+        let maxDimension: CGFloat = 1400
+
+        let cacheKey =
+            "pdf-\(bookID.uuidString)-page-\(pageIndex)-\(Int(maxDimension))"
+
+        if let cached = ImageEnhancementService.shared.cachedImage(
+            for: cacheKey,
+            settings: settings
+        ) {
+            renderedImage = cached
+            return
+        }
+
+        guard let page = document.page(at: pageIndex) else {
+            return
+        }
+
+        isRendering = true
+        defer {
+            isRendering = false
+        }
+
+        // Даём интерфейсу возможность показать индикатор загрузки.
+        await Task.yield()
+
+        guard !Task.isCancelled else {
+            return
+        }
+
+        let bounds = page.bounds(for: .mediaBox)
+
+        guard bounds.width > 0, bounds.height > 0 else {
+            return
+        }
+
+        let aspectRatio = bounds.width / bounds.height
+
+        let renderSize: CGSize
+        if aspectRatio >= 1 {
+            renderSize = CGSize(
+                width: maxDimension,
+                height: max(1, maxDimension / aspectRatio)
+            )
+        } else {
+            renderSize = CGSize(
+                width: max(1, maxDimension * aspectRatio),
+                height: maxDimension
+            )
+        }
+
+        let renderer = UIGraphicsImageRenderer(size: renderSize)
+
+        let originalImage = renderer.image { rendererContext in
+            UIColor.white.setFill()
+            rendererContext.fill(
+                CGRect(origin: .zero, size: renderSize)
+            )
+
+            let context = rendererContext.cgContext
+            context.saveGState()
+
+            context.translateBy(
+                x: 0,
+                y: renderSize.height
+            )
+            context.scaleBy(
+                x: renderSize.width / bounds.width,
+                y: -renderSize.height / bounds.height
+            )
+            context.translateBy(
+                x: -bounds.minX,
+                y: -bounds.minY
+            )
+
+            page.draw(with: .mediaBox, to: context)
+
+            context.restoreGState()
+        }
+
+        guard !Task.isCancelled else {
+            return
+        }
+
+        let enhancedImage = ImageEnhancementService.shared.enhance(
             originalImage,
+            cacheKey: cacheKey,
             settings: settings
         )
+
+        guard !Task.isCancelled else {
+            return
+        }
+
+        renderedImage = enhancedImage
     }
 }

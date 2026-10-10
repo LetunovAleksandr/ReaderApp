@@ -1,39 +1,71 @@
 
-import SwiftUI
+import UIKit
 import CoreImage
 import CoreImage.CIFilterBuiltins
-import UIKit
 
 struct ImageEnhancementSettings {
     var enabled = true
-
-    // Контраст: 1.0 — без изменений
     var contrast: Float = 1.2
-
-    // Яркость: 0.0 — без изменений
     var brightness: Float = 0.02
-
-    // Насыщенность: 0.0 — чёрно-белое изображение
     var saturation: Float = 0.0
-
-    // Резкость: 0.0 — без дополнительной резкости
     var sharpness: Float = 0.4
+
+    var cacheKey: String {
+        [
+            enabled ? "1" : "0",
+            String(contrast),
+            String(brightness),
+            String(saturation),
+            String(sharpness)
+        ].joined(separator: "_")
+    }
 }
 
 final class ImageEnhancementService {
     static let shared = ImageEnhancementService()
 
     private let context = CIContext()
+    private let cache = NSCache<NSString, UIImage>()
 
-    private init() {}
+    private init() {
+        cache.totalCostLimit = 64 * 1024 * 1024
+        cache.countLimit = 12
+
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.didReceiveMemoryWarningNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.clearCache()
+        }
+    }
+
+    func cachedImage(
+        for key: String,
+        settings: ImageEnhancementSettings
+    ) -> UIImage? {
+        let fullKey = "\(key)|\(settings.cacheKey)" as NSString
+        return cache.object(forKey: fullKey)
+    }
 
     func enhance(
         _ image: UIImage,
+        cacheKey: String? = nil,
         settings: ImageEnhancementSettings
     ) -> UIImage {
-        guard settings.enabled,
-              let inputImage = CIImage(image: image)
-        else {
+        guard settings.enabled else {
+            return image
+        }
+
+        let key: NSString? = cacheKey.map {
+            "\($0)|\(settings.cacheKey)" as NSString
+        }
+
+        if let key, let cached = cache.object(forKey: key) {
+            return cached
+        }
+
+        guard let inputImage = CIImage(image: image) else {
             return image
         }
 
@@ -51,19 +83,31 @@ final class ImageEnhancementService {
         sharpen.inputImage = colorOutput
         sharpen.sharpness = settings.sharpness
 
-        guard let outputImage = sharpen.outputImage,
-              let cgImage = context.createCGImage(
-                  outputImage,
-                  from: outputImage.extent
-              )
+        guard
+            let outputImage = sharpen.outputImage,
+            let cgImage = context.createCGImage(
+                outputImage,
+                from: outputImage.extent
+            )
         else {
             return image
         }
 
-        return UIImage(
+        let result = UIImage(
             cgImage: cgImage,
             scale: image.scale,
             orientation: image.imageOrientation
         )
+
+        if let key {
+            let cost = cgImage.bytesPerRow * cgImage.height
+            cache.setObject(result, forKey: key, cost: cost)
+        }
+
+        return result
+    }
+
+    func clearCache() {
+        cache.removeAllObjects()
     }
 }
