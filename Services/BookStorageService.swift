@@ -38,6 +38,7 @@ struct BookStorageService {
             at: booksDirectory,
             withIntermediateDirectories: true
         )
+
         try? fileManager.createDirectory(
             at: coversDirectory,
             withIntermediateDirectories: true
@@ -75,14 +76,17 @@ struct BookStorageService {
             at: booksDirectory,
             withIntermediateDirectories: true
         )
+
         try fileManager.createDirectory(
             at: coversDirectory,
             withIntermediateDirectories: true
         )
 
         let id = UUID()
+
         let storedFileName =
             "\(id.uuidString).\(format.rawValue.lowercased())"
+
         let coverFileName = "\(id.uuidString).jpg"
 
         let destinationURL = booksDirectory.appendingPathComponent(
@@ -110,17 +114,22 @@ struct BookStorageService {
                 let coverURL = coversDirectory
                     .appendingPathComponent(coverFileName)
 
-                try coverData.write(to: coverURL, options: .atomic)
+                try coverData.write(
+                    to: coverURL,
+                    options: .atomic
+                )
             }
 
             var books = try loadLibrary()
             books.append(book)
+
             try saveLibrary(books)
         } catch {
             try? fileManager.removeItem(at: destinationURL)
 
             let coverURL = coversDirectory
                 .appendingPathComponent(coverFileName)
+
             try? fileManager.removeItem(at: coverURL)
 
             throw error
@@ -158,7 +167,9 @@ struct BookStorageService {
         return image?.jpegData(compressionQuality: 0.88)
     }
 
-    private func firstImageFromCBZ(_ archiveURL: URL) -> UIImage? {
+    private func firstImageFromCBZ(
+        _ archiveURL: URL
+    ) -> UIImage? {
         guard let archive = Archive(
             url: archiveURL,
             accessMode: .read
@@ -206,9 +217,7 @@ struct BookStorageService {
 
             return UIImage(contentsOfFile: temporaryURL.path)
         } catch {
-            print(
-                "Не удалось извлечь обложку CBZ: \(error)"
-            )
+            print("Не удалось извлечь обложку CBZ: \(error)")
             return nil
         }
     }
@@ -219,7 +228,11 @@ struct BookStorageService {
         }
 
         let data = try Data(contentsOf: libraryURL)
-        return try JSONDecoder().decode([Book].self, from: data)
+
+        return try JSONDecoder().decode(
+            [Book].self,
+            from: data
+        )
     }
 
     func saveLibrary(_ books: [Book]) throws {
@@ -229,10 +242,23 @@ struct BookStorageService {
         )
 
         let data = try JSONEncoder().encode(books)
-        try data.write(to: libraryURL, options: .atomic)
+
+        try data.write(
+            to: libraryURL,
+            options: .atomic
+        )
+
+        // Уведомляем экраны об успешном сохранении библиотеки.
+        NotificationCenter.default.post(
+            name: .readerLibraryDidChange,
+            object: nil
+        )
     }
 
-    func deleteBook(_ book: Book, from books: [Book]) throws {
+    func deleteBook(
+        _ book: Book,
+        from books: [Book]
+    ) throws {
         let bookURL = fileURL(for: book)
 
         if fileManager.fileExists(atPath: bookURL.path) {
@@ -244,7 +270,16 @@ struct BookStorageService {
             try fileManager.removeItem(at: coverURL)
         }
 
-        let updatedBooks = books.filter { $0.id != book.id }
+        let updatedBooks = books.filter {
+            $0.id != book.id
+        }
+
         try saveLibrary(updatedBooks)
     }
+}
+
+// Уведомление об изменении библиотеки.
+extension Notification.Name {
+    static let readerLibraryDidChange =
+        Notification.Name("readerLibraryDidChange")
 }

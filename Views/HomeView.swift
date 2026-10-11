@@ -72,7 +72,10 @@ struct HomeView: View {
                     Spacer(minLength: 24)
 
                     ScrollView(showsIndicators: false) {
-                        VStack(alignment: .leading, spacing: 26) {
+                        VStack(
+                            alignment: .leading,
+                            spacing: 26
+                        ) {
                             if books.isEmpty {
                                 emptyLibrary
                             } else {
@@ -122,11 +125,22 @@ struct HomeView: View {
         .task {
             loadBooks()
         }
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: .readerLibraryDidChange
+            )
+        ) { _ in
+            loadBooks()
+        }
         .alert(
             "Не удалось загрузить библиотеку",
             isPresented: Binding(
                 get: { loadError != nil },
-                set: { if !$0 { loadError = nil } }
+                set: {
+                    if !$0 {
+                        loadError = nil
+                    }
+                }
             )
         ) {
             Button("ОК", role: .cancel) {
@@ -196,8 +210,9 @@ struct HomeView: View {
 
     // MARK: - Current book
 
-
-    private func currentBookSection(_ book: Book) -> some View {
+    private func currentBookSection(
+        _ book: Book
+    ) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Текущая книга")
                 .font(.system(size: 21, weight: .bold))
@@ -213,9 +228,17 @@ struct HomeView: View {
                         height: 164
                     )
 
-                    VStack(alignment: .leading, spacing: 9) {
+                    VStack(
+                        alignment: .leading,
+                        spacing: 9
+                    ) {
                         Text(book.title)
-                            .font(.system(size: 18, weight: .semibold))
+                            .font(
+                                .system(
+                                    size: 18,
+                                    weight: .semibold
+                                )
+                            )
                             .foregroundStyle(.white)
                             .lineLimit(3)
                             .multilineTextAlignment(.leading)
@@ -235,7 +258,10 @@ struct HomeView: View {
                         ProgressView(value: book.readingProgress)
                             .tint(.white)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(
+                        maxWidth: .infinity,
+                        alignment: .leading
+                    )
                     .frame(height: 164)
                 }
                 .padding(16)
@@ -251,9 +277,8 @@ struct HomeView: View {
         }
     }
 
-
     // MARK: - Library carousel
-    
+
     private var librarySection: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Твоя библиотека")
@@ -293,9 +318,11 @@ struct HomeView: View {
                         .tint(.white)
                         .frame(width: 132)
 
-                    Text("\(Int(book.readingProgress * 100))% прочитано")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.white.opacity(0.7))
+                    Text(
+                        "\(Int(book.readingProgress * 100))% прочитано"
+                    )
+                    .font(.system(size: 11))
+                    .foregroundStyle(.white.opacity(0.7))
                 } else {
                     Text("Ещё не прочитана")
                         .font(.system(size: 11))
@@ -319,7 +346,6 @@ struct HomeView: View {
         }
         .buttonStyle(.plain)
     }
-
 
     // MARK: - Book format icon
 
@@ -348,6 +374,7 @@ struct HomeView: View {
     private func loadBooks() {
         do {
             books = try storage.loadLibrary()
+            loadError = nil
         } catch {
             loadError = error.localizedDescription
         }
