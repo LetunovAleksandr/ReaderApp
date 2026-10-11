@@ -10,6 +10,7 @@ private enum AppTab: Hashable {
 struct RootView: View {
     @State private var selectedTab: AppTab = .home
     @State private var requestImport = false
+    @State private var pendingImport = false
 
     @State private var selectedPDFBook: Book?
     @State private var selectedCBZBook: Book?
@@ -22,7 +23,12 @@ struct RootView: View {
                         selectedTab = .library
                     },
                     onImportBook: {
-                        requestImport = true
+                        if selectedTab == .library {
+                            requestImport = true
+                        } else {
+                            pendingImport = true
+                            selectedTab = .library
+                        }
                     },
                     onOpenBook: { book in
                         openBook(book)
@@ -46,9 +52,16 @@ struct RootView: View {
                     .tag(AppTab.settings)
             }
             .tint(.white)
+            .onChange(of: selectedTab) { _, newTab in
+                guard newTab == .library, pendingImport else {
+                    return
+                }
+
+                pendingImport = false
+                requestImport = true
+            }
 
             // PDF располагается поверх основного интерфейса.
-            // Под ним остаётся видимым выбранный экран приложения.
             if let book = selectedPDFBook {
                 PDFReaderView(book: book) {
                     selectedPDFBook = nil
@@ -69,10 +82,13 @@ struct RootView: View {
     }
 
     private func openBook(_ book: Book) {
-        if book.format == .pdf {
+        switch book.format {
+        case .pdf:
             selectedPDFBook = book
-        } else if book.format == .cbz {
+        case .cbz:
             selectedCBZBook = book
+        default:
+            break
         }
     }
 }
