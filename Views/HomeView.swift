@@ -241,10 +241,6 @@ struct HomeView: View {
                         minHeight: 116,
                         alignment: .leading
                     )
-
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.75))
                 }
                 .padding(16)
                 .background(
@@ -330,10 +326,6 @@ struct HomeView: View {
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.75))
             }
             .padding(16)
             .frame(width: width, height: 148)

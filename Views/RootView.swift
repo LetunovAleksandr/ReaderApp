@@ -10,57 +10,70 @@ private enum AppTab: Hashable {
 struct RootView: View {
     @State private var selectedTab: AppTab = .home
     @State private var requestImport = false
-    @State private var selectedBook: Book?
+
+    @State private var selectedPDFBook: Book?
+    @State private var selectedCBZBook: Book?
 
     var body: some View {
-        TabView(selection: $selectedTab) {
-            HomeView(
-                onOpenLibrary: {
-                    selectedTab = .library
-                },
-                onImportBook: {
-                    selectedTab = .library
-                    requestImport = true
-                },
-                onOpenBook: { book in
-                    selectedBook = book
-                }
-            )
-            .tabItem {
-                Label("Главная", systemImage: "house.fill")
-            }
-            .tag(AppTab.home)
-
-            LibraryView(requestImport: $requestImport)
-                .tabItem {
-                    Label("Библиотека", systemImage: "books.vertical")
-                }
-                .tag(AppTab.library)
-
-            SettingsView()
-                .tabItem {
-                    Label("Настройки", systemImage: "gearshape")
-                }
-                .tag(AppTab.settings)
-        }
-        .tint(.white)
-        .preferredColorScheme(.dark)
-        .fullScreenCover(item: $selectedBook) { book in
-            if book.format == .pdf {
-                PDFReaderView(book: book) {
-                    selectedBook = nil
-                }
-            } else if book.format == .cbz {
-                CBZReaderView(book: book)
-            } else {
-                ContentUnavailableView(
-                    "Формат не поддерживается",
-                    systemImage: "book.closed",
-                    description: Text(
-                        "Не удалось открыть выбранную книгу."
-                    )
+        ZStack {
+            TabView(selection: $selectedTab) {
+                HomeView(
+                    onOpenLibrary: {
+                        selectedTab = .library
+                    },
+                    onImportBook: {
+                        selectedTab = .library
+                        requestImport = true
+                    },
+                    onOpenBook: { book in
+                        openBook(book)
+                    }
                 )
+                .tabItem {
+                    Label("Главная", systemImage: "house.fill")
+                }
+                .tag(AppTab.home)
+
+                LibraryView(requestImport: $requestImport)
+                    .tabItem {
+                        Label("Библиотека", systemImage: "books.vertical")
+                    }
+                    .tag(AppTab.library)
+
+                SettingsView()
+                    .tabItem {
+                        Label("Настройки", systemImage: "gearshape")
+                    }
+                    .tag(AppTab.settings)
             }
+            .tint(.white)
+
+            // PDF располагается поверх основного интерфейса.
+            // Под ним остаётся видимым выбранный экран приложения.
+            if let book = selectedPDFBook {
+                PDFReaderView(book: book) {
+                    selectedPDFBook = nil
+                }
+                .frame(
+                    maxWidth: .infinity,
+                    maxHeight: .infinity
+                )
+                .background(Color.clear)
+                .transition(.identity)
+                .zIndex(1)
+            }
+        }
+        .preferredColorScheme(.dark)
+        .fullScreenCover(item: $selectedCBZBook) { book in
+            CBZReaderView(book: book)
+        }
+    }
+
+    private func openBook(_ book: Book) {
+        if book.format == .pdf {
+            selectedPDFBook = book
+        } else if book.format == .cbz {
+            selectedCBZBook = book
         }
     }
 }
