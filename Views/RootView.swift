@@ -1,5 +1,6 @@
 
 import SwiftUI
+import UniformTypeIdentifiers
 
 private enum AppTab: Hashable {
     case home
@@ -10,10 +11,27 @@ private enum AppTab: Hashable {
 struct RootView: View {
     @State private var selectedTab: AppTab = .home
     @State private var requestImport = false
-    @State private var pendingImport = false
+    @State private var isImporterPresented = false
+    @State private var errorMessage: String?
 
     @State private var selectedPDFBook: Book?
     @State private var selectedCBZBook: Book?
+
+    private let storage = BookStorageService()
+
+    private var supportedTypes: [UTType] {
+        var types: [UTType] = [.pdf]
+
+        if let epub = UTType(filenameExtension: "epub") {
+            types.append(epub)
+        }
+
+        if let cbz = UTType(filenameExtension: "cbz") {
+            types.append(cbz)
+        }
+
+        return types
+    }
 
     var body: some View {
         ZStack {
@@ -23,12 +41,7 @@ struct RootView: View {
                         selectedTab = .library
                     },
                     onImportBook: {
-                        if selectedTab == .library {
-                            requestImport = true
-                        } else {
-                            pendingImport = true
-                            selectedTab = .library
-                        }
+                        requestImport = true
                     },
                     onOpenBook: { book in
                         openBook(book)
@@ -39,11 +52,13 @@ struct RootView: View {
                 }
                 .tag(AppTab.home)
 
-                LibraryView(requestImport: $requestImport)
-                    .tabItem {
-                        Label("Библиотека", systemImage: "books.vertical")
-                    }
-                    .tag(AppTab.library)
+                LibraryView(
+                    requestImport: $requestImport
+                )
+                .tabItem {
+                    Label("Библиотека", systemImage: "books.vertical")
+                }
+                .tag(AppTab.library)
 
                 SettingsView()
                     .tabItem {
@@ -52,16 +67,8 @@ struct RootView: View {
                     .tag(AppTab.settings)
             }
             .tint(.white)
-            .onChange(of: selectedTab) { _, newTab in
-                guard newTab == .library, pendingImport else {
-                    return
-                }
 
-                pendingImport = false
-                requestImport = true
-            }
-
-            // PDF располагается поверх основного интерфейса.
+            // PDF-читалка поверх текущей вкладки.
             if let book = selectedPDFBook {
                 PDFReaderView(book: book) {
                     selectedPDFBook = nil
@@ -76,19 +83,80 @@ struct RootView: View {
             }
         }
         .preferredColorScheme(.dark)
+        // Запрос на импорт поступает с главного экрана
+        // или из библиотеки.
+        .onChange(of: requestImport) { _, shouldImport in
+            guard shouldImport else { return }
+
+            requestImport = false
+            isImporterPresented = true
+        }
+        // Файловый менеджер находится на уровне RootView,
+        // поэтому не зависит от выбранной вкладки.
+        .fileImporter(
+            isPresented: $isImporterPresented,
+            allowedContentTypes: supportedTypes,
+            allowsMultipleSelection: true,
+            onCompletion: handleImport
+        )
+        .alert(
+            "Ошибка",
+            isPresented: Binding(
+                get: { errorMessage != nil },
+                set: {
+                    if !$0 {
+                        errorMessage = nil
+                    }
+                }
+            )
+        ) {
+            Button("ОК", role: .cancel) {
+                errorMessage = nil
+            }
+        } message: {
+            Text(errorMessage ?? "")
+        }
         .fullScreenCover(item: $selectedCBZBook) { book in
             CBZReaderView(book: book)
         }
     }
 
     private func openBook(_ book: Book) {
-        switch book.format {
-        case .pdf:
+        if book.format == .pdf {
             selectedPDFBook = book
-        case .cbz:
+        } else if book.format == .cbz {
             selectedCBZBook = book
-        default:
-            break
+        } else {
+            errorMessage =
+                "Читалка формата \(book.format.rawValue) пока находится в разработке."
+        }
+    }
+
+    private func handleImport(
+        _ result: Result<[URL], Error>
+    ) {
+        switch result {
+        case .success(let urls):
+            for url in urls {
+                do {
+                    _ = try storage.importBook(from: url)
+                } catch {
+                    errorMessage =
+                        "Не удалось импортировать файл: \(error.localizedDescription)"
+                    return
+                }
+            }
+
+            // BookStorageService отправляет уведомление
+            // об изменении библиотеки после сохранения.
+            // Главный экран и библиотека обновятся автоматически.
+
+        case .failure(let error):
+            // Отмена выбора файла не считается ошибкой.
+            if (error as? CocoaError)?.code != .userCancelled {
+                errorMessage =
+                    "Не удалось выбрать файл: \(error.localizedDescription)"
+            }
         }
     }
 }
