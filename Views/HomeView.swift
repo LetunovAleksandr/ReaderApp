@@ -47,7 +47,9 @@ struct HomeView: View {
             }
             .frame(width: geometry.size.width, height: geometry.size.height)
         }
-        .task(perform: loadBooks)
+        .task{
+            loadBooks()
+        }
         .alert("Не удалось загрузить библиотеку", isPresented: Binding(
             get: { loadError != nil },
             set: { if !$0 { loadError = nil } }
