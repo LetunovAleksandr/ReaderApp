@@ -248,14 +248,3 @@ struct BookStorageService {
         try saveLibrary(updatedBooks)
     }
 }
-
-enum BookImportError: LocalizedError {
-    case unsupportedFormat
-
-    var errorDescription: String? {
-        switch self {
-        case .unsupportedFormat:
-            return "Этот формат файла не поддерживается."
-        }
-    }
-}
