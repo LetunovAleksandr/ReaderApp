@@ -4,6 +4,7 @@ import SwiftUI
 struct HomeView: View {
     let onOpenLibrary: () -> Void
     let onImportBook: () -> Void
+    let onOpenBook: (Book) -> Void
 
     @State private var books: [Book] = []
     @State private var loadError: String?
@@ -12,15 +13,13 @@ struct HomeView: View {
 
     // MARK: - Book selection
 
-    /// Последняя добавленная книга, чтение которой уже начато.
     private var currentBook: Book? {
         books
             .filter { $0.readingProgress > 0 }
             .max { $0.dateAdded < $1.dateAdded }
     }
 
-    /// Остальные книги для горизонтальной ленты.
-    private var suggestedBooks: [Book] {
+    private var libraryBooks: [Book] {
         let currentID = currentBook?.id
 
         return books
@@ -70,6 +69,8 @@ struct HomeView: View {
                 VStack(spacing: 0) {
                     header
 
+                    Spacer(minLength: 24)
+
                     ScrollView(showsIndicators: false) {
                         VStack(alignment: .leading, spacing: 26) {
                             if books.isEmpty {
@@ -79,62 +80,31 @@ struct HomeView: View {
                                     currentBookSection(book)
                                 }
 
-                                if !suggestedBooks.isEmpty {
-                                    suggestionsSection
+                                if !libraryBooks.isEmpty {
+                                    librarySection
                                 }
 
-                                // Если книги есть, но чтение ещё
-                                // не начато, показываем библиотеку.
                                 if currentBook == nil {
-                                    VStack(alignment: .leading, spacing: 16) {
-                                        Text("Твоя библиотека")
-                                            .font(
-                                                .system(
-                                                    size: 21,
-                                                    weight: .bold
-                                                )
-                                            )
-                                            .foregroundStyle(.white)
-
-                                        Text("Выбери книгу, чтобы начать чтение.")
-                                            .font(.subheadline)
-                                            .foregroundStyle(
-                                                .white.opacity(0.75)
-                                            )
-
-                                        Button(action: onOpenLibrary) {
-                                            Label(
-                                                "Открыть библиотеку",
-                                                systemImage: "books.vertical"
-                                            )
-                                            .font(.headline)
-                                            .foregroundStyle(.black)
-                                            .padding(.horizontal, 18)
-                                            .padding(.vertical, 12)
-                                            .background(
-                                                .white,
-                                                in: Capsule()
-                                            )
-                                        }
-                                        .buttonStyle(.plain)
-                                    }
-                                    .frame(
-                                        maxWidth: .infinity,
-                                        alignment: .leading
-                                    )
-                                    .padding(20)
-                                    .background(
-                                        .black.opacity(0.72),
-                                        in: RoundedRectangle(
-                                            cornerRadius: 22,
-                                            style: .continuous
+                                    Button(action: onOpenLibrary) {
+                                        Label(
+                                            "Открыть библиотеку",
+                                            systemImage: "books.vertical"
                                         )
-                                    )
+                                        .font(.headline)
+                                        .foregroundStyle(.black)
+                                        .padding(.horizontal, 18)
+                                        .padding(.vertical, 12)
+                                        .background(
+                                            .white,
+                                            in: Capsule()
+                                        )
+                                    }
+                                    .buttonStyle(.plain)
                                 }
                             }
                         }
-                        .padding(.top, 24)
-                        .padding(.bottom, 24)
+                        .padding(.top, 12)
+                        .padding(.bottom, 12)
                     }
                 }
                 .padding(.horizontal, 20)
@@ -232,7 +202,9 @@ struct HomeView: View {
                 .font(.system(size: 21, weight: .bold))
                 .foregroundStyle(.white)
 
-            Button(action: onOpenLibrary) {
+            Button {
+                onOpenBook(book)
+            } label: {
                 HStack(spacing: 16) {
                     bookFormatIcon(book, width: 76, height: 116)
 
@@ -289,7 +261,7 @@ struct HomeView: View {
 
     // MARK: - Library carousel
 
-    private var suggestionsSection: some View {
+    private var librarySection: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Твоя библиотека")
                 .font(.system(size: 21, weight: .bold))
@@ -298,8 +270,8 @@ struct HomeView: View {
             GeometryReader { geometry in
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 12) {
-                        ForEach(suggestedBooks) { book in
-                            suggestionCard(
+                        ForEach(libraryBooks) { book in
+                            libraryCard(
                                 book,
                                 width: geometry.size.width
                             )
@@ -313,11 +285,13 @@ struct HomeView: View {
         }
     }
 
-    private func suggestionCard(
+    private func libraryCard(
         _ book: Book,
         width: CGFloat
     ) -> some View {
-        Button(action: onOpenLibrary) {
+        Button {
+            onOpenBook(book)
+        } label: {
             HStack(spacing: 16) {
                 bookFormatIcon(book, width: 76, height: 116)
 
@@ -416,6 +390,7 @@ struct HomeView: View {
 #Preview {
     HomeView(
         onOpenLibrary: {},
-        onImportBook: {}
+        onImportBook: {},
+        onOpenBook: { _ in }
     )
 }
