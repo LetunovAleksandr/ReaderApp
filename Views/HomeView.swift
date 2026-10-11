@@ -196,6 +196,7 @@ struct HomeView: View {
 
     // MARK: - Current book
 
+
     private func currentBookSection(_ book: Book) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Текущая книга")
@@ -206,18 +207,17 @@ struct HomeView: View {
                 onOpenBook(book)
             } label: {
                 HStack(spacing: 16) {
-                    bookFormatIcon(book, width: 76, height: 116)
+                    BookCoverView(
+                        book: book,
+                        width: 112,
+                        height: 164
+                    )
 
                     VStack(alignment: .leading, spacing: 9) {
                         Text(book.title)
-                            .font(
-                                .system(
-                                    size: 18,
-                                    weight: .semibold
-                                )
-                            )
+                            .font(.system(size: 18, weight: .semibold))
                             .foregroundStyle(.white)
-                            .lineLimit(2)
+                            .lineLimit(3)
                             .multilineTextAlignment(.leading)
 
                         Text(book.format.rawValue)
@@ -227,8 +227,7 @@ struct HomeView: View {
                         Spacer(minLength: 0)
 
                         Text(
-                            "Прогресс чтения · " +
-                            "\(Int(book.readingProgress * 100))%"
+                            "Прогресс чтения · \(Int(book.readingProgress * 100))%"
                         )
                         .font(.system(size: 13))
                         .foregroundStyle(.white.opacity(0.75))
@@ -236,11 +235,8 @@ struct HomeView: View {
                         ProgressView(value: book.readingProgress)
                             .tint(.white)
                     }
-                    .frame(
-                        maxWidth: .infinity,
-                        minHeight: 116,
-                        alignment: .leading
-                    )
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(height: 164)
                 }
                 .padding(16)
                 .background(
@@ -255,96 +251,75 @@ struct HomeView: View {
         }
     }
 
-    // MARK: - Library carousel
 
+    // MARK: - Library carousel
+    
     private var librarySection: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Твоя библиотека")
                 .font(.system(size: 21, weight: .bold))
                 .foregroundStyle(.white)
 
-            GeometryReader { geometry in
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 12) {
-                        ForEach(libraryBooks) { book in
-                            libraryCard(
-                                book,
-                                width: geometry.size.width
-                            )
-                        }
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(alignment: .top, spacing: 14) {
+                    ForEach(libraryBooks) { book in
+                        libraryCard(book)
                     }
-                    .scrollTargetLayout()
                 }
-                .scrollTargetBehavior(.viewAligned)
             }
-            .frame(height: 148)
         }
     }
 
-    private func libraryCard(
-        _ book: Book,
-        width: CGFloat
-    ) -> some View {
+    private func libraryCard(_ book: Book) -> some View {
         Button {
             onOpenBook(book)
         } label: {
-            HStack(spacing: 16) {
-                bookFormatIcon(book, width: 76, height: 116)
+            VStack(alignment: .leading, spacing: 8) {
+                BookCoverView(
+                    book: book,
+                    width: 132,
+                    height: 176
+                )
 
-                VStack(alignment: .leading, spacing: 9) {
-                    Text(book.title)
-                        .font(
-                            .system(
-                                size: 18,
-                                weight: .semibold
-                            )
-                        )
-                        .foregroundStyle(.white)
-                        .lineLimit(2)
-                        .multilineTextAlignment(.leading)
+                Text(book.title)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                    .frame(width: 132, alignment: .leading)
 
-                    Text(book.format.rawValue)
-                        .font(.system(size: 14))
+                if book.readingProgress > 0 {
+                    ProgressView(value: book.readingProgress)
+                        .tint(.white)
+                        .frame(width: 132)
+
+                    Text("\(Int(book.readingProgress * 100))% прочитано")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.white.opacity(0.7))
+                } else {
+                    Text("Ещё не прочитана")
+                        .font(.system(size: 11))
                         .foregroundStyle(.white.opacity(0.65))
-
-                    Spacer(minLength: 0)
-
-                    if book.readingProgress > 0 {
-                        Text(
-                            "Прогресс чтения · " +
-                            "\(Int(book.readingProgress * 100))%"
-                        )
-                        .font(.system(size: 13))
-                        .foregroundStyle(.white.opacity(0.75))
-
-                        ProgressView(value: book.readingProgress)
-                            .tint(.white)
-                    } else {
-                        Text("Ещё не прочитана")
-                            .font(.system(size: 13))
-                            .foregroundStyle(.white.opacity(0.65))
-                    }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(16)
-            .frame(width: width, height: 148)
+            .padding(10)
             .background(
-                .black.opacity(0.72),
+                .black.opacity(0.55),
                 in: RoundedRectangle(
-                    cornerRadius: 20,
+                    cornerRadius: 16,
                     style: .continuous
                 )
             )
             .contentShape(
                 RoundedRectangle(
-                    cornerRadius: 20,
+                    cornerRadius: 16,
                     style: .continuous
                 )
             )
         }
         .buttonStyle(.plain)
     }
+
 
     // MARK: - Book format icon
 
