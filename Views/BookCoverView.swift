@@ -5,7 +5,7 @@ import UIKit
 struct BookCoverView: View {
     let book: Book
 
-    var width: CGFloat
+    var width: CGFloat?
     var height: CGFloat
 
     private let storage = BookStorageService()
@@ -29,7 +29,10 @@ struct BookCoverView: View {
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFill()
-                    .frame(width: width, height: height)
+                    .frame(
+                        width: width,
+                        height: height
+                    )
                     .clipped()
             } else {
                 VStack(spacing: 10) {
@@ -45,6 +48,7 @@ struct BookCoverView: View {
                         .font(.caption.bold())
                         .foregroundStyle(.white.opacity(0.7))
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .frame(width: width, height: height)
@@ -56,7 +60,10 @@ struct BookCoverView: View {
         )
         .overlay {
             RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(.white.opacity(0.08), lineWidth: 1)
+                .strokeBorder(
+                    .white.opacity(0.08),
+                    lineWidth: 1
+                )
         }
     }
 }

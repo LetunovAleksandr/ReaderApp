@@ -3,6 +3,7 @@ import Foundation
 import PDFKit
 import ZIPFoundation
 import UIKit
+import CryptoKit
 
 struct BookStorageService {
     private let fileManager = FileManager.default
@@ -57,6 +58,8 @@ struct BookStorageService {
         return coversDirectory.appendingPathComponent(coverFileName)
     }
 
+    // MARK: - Import
+
     func importBook(from sourceURL: URL) throws -> Book {
         let hasAccess = sourceURL.startAccessingSecurityScopedResource()
 
@@ -70,6 +73,46 @@ struct BookStorageService {
             fileExtension: sourceURL.pathExtension
         ) else {
             throw BookImportError.unsupportedFormat
+        }
+
+        let sourceHash = try calculateSHA256(of: sourceURL)
+
+        var books = try loadLibrary()
+
+        // Проверяем дубликаты до копирования файла.
+        for index in books.indices {
+            let existingBook = books[index]
+
+            let existingURL = fileURL(for: existingBook)
+
+            guard fileManager.fileExists(
+                atPath: existingURL.path
+            ) else {
+                continue
+            }
+
+            let existingHash: String
+
+            if let savedHash = existingBook.contentHash {
+                existingHash = savedHash
+            } else {
+                existingHash = try calculateSHA256(
+                    of: existingURL
+                )
+
+                // Запоминаем хеш для будущих проверок.
+                books[index].contentHash = existingHash
+            }
+
+            if existingHash == sourceHash {
+                // Не создаём дубликат и сохраняем прогресс.
+                if books[index].contentHash == nil {
+                    books[index].contentHash = existingHash
+                    try saveLibrary(books)
+                }
+
+                return books[index]
+            }
         }
 
         try fileManager.createDirectory(
@@ -103,7 +146,8 @@ struct BookStorageService {
             title: sourceURL.deletingPathExtension().lastPathComponent,
             fileName: storedFileName,
             format: format,
-            coverFileName: coverFileName
+            coverFileName: coverFileName,
+            contentHash: sourceHash
         )
 
         do {
@@ -120,9 +164,7 @@ struct BookStorageService {
                 )
             }
 
-            var books = try loadLibrary()
             books.append(book)
-
             try saveLibrary(books)
         } catch {
             try? fileManager.removeItem(at: destinationURL)
@@ -137,6 +179,19 @@ struct BookStorageService {
 
         return book
     }
+
+    // MARK: - SHA-256
+
+    private func calculateSHA256(of url: URL) throws -> String {
+        let data = try Data(contentsOf: url, options: .mappedIfSafe)
+        let digest = SHA256.hash(data: data)
+
+        return digest.map {
+            String(format: "%02x", $0)
+        }.joined()
+    }
+
+    // MARK: - Covers
 
     private func generateCover(
         from fileURL: URL,
@@ -160,7 +215,7 @@ struct BookStorageService {
             image = firstImageFromCBZ(fileURL)
 
         case .epub:
-            // Извлечение встроенной обложки EPUB добавим отдельно.
+            // Извлечение встроенной обложки EPUB пока не реализовано.
             image = nil
         }
 
@@ -222,6 +277,8 @@ struct BookStorageService {
         }
     }
 
+    // MARK: - Library
+
     func loadLibrary() throws -> [Book] {
         guard fileManager.fileExists(atPath: libraryURL.path) else {
             return []
@@ -248,12 +305,13 @@ struct BookStorageService {
             options: .atomic
         )
 
-        // Уведомляем экраны об успешном сохранении библиотеки.
         NotificationCenter.default.post(
             name: .readerLibraryDidChange,
             object: nil
         )
     }
+
+    // MARK: - Delete
 
     func deleteBook(
         _ book: Book,
@@ -278,7 +336,8 @@ struct BookStorageService {
     }
 }
 
-// Уведомление об изменении библиотеки.
+// MARK: - Notifications
+
 extension Notification.Name {
     static let readerLibraryDidChange =
         Notification.Name("readerLibraryDidChange")

@@ -28,6 +28,7 @@ struct Book: Identifiable, Codable, Equatable {
     var dateAdded: Date
     var readingProgress: Double
     var coverFileName: String?
+    var contentHash: String?
 
     init(
         id: UUID = UUID(),
@@ -36,7 +37,8 @@ struct Book: Identifiable, Codable, Equatable {
         format: BookFormat,
         dateAdded: Date = Date(),
         readingProgress: Double = 0,
-        coverFileName: String? = nil
+        coverFileName: String? = nil,
+        contentHash: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -45,5 +47,6 @@ struct Book: Identifiable, Codable, Equatable {
         self.dateAdded = dateAdded
         self.readingProgress = min(max(readingProgress, 0), 1)
         self.coverFileName = coverFileName
+        self.contentHash = contentHash
     }
 }
