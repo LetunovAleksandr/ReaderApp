@@ -2,12 +2,17 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct LibraryView: View {
+    @Binding private var requestImport: Bool
     @State private var books: [Book] = []
     @State private var isImporterPresented = false
     @State private var errorMessage: String?
     @State private var selectedPDFBook: Book?
 
     private let storage = BookStorageService()
+
+    init(requestImport: Binding<Bool> = .constant(false)) {
+        self._requestImport = requestImport
+    }
 
     private var supportedTypes: [UTType] {
         var types: [UTType] = [.pdf]
@@ -44,6 +49,11 @@ struct LibraryView: View {
                 }
             }
             .toolbar(.hidden, for: .navigationBar)
+            .onChange(of: requestImport) { _, shouldImport in
+                guard shouldImport else { return }
+                isImporterPresented = true
+                requestImport = false
+            }
             .fileImporter(
                 isPresented: $isImporterPresented,
                 allowedContentTypes: supportedTypes,
