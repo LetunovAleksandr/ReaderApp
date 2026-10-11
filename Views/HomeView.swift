@@ -10,12 +10,25 @@ struct HomeView: View {
 
     private let storage = BookStorageService()
 
+    // MARK: - Book selection
+
     /// Последняя добавленная книга, чтение которой уже начато.
     private var currentBook: Book? {
         books
             .filter { $0.readingProgress > 0 }
             .max { $0.dateAdded < $1.dateAdded }
     }
+
+    /// Остальные книги для горизонтальной ленты.
+    private var suggestedBooks: [Book] {
+        let currentID = currentBook?.id
+
+        return books
+            .filter { $0.id != currentID }
+            .sorted { $0.dateAdded > $1.dateAdded }
+    }
+
+    // MARK: - Body
 
     var body: some View {
         GeometryReader { geometry in
@@ -57,13 +70,75 @@ struct HomeView: View {
                 VStack(spacing: 0) {
                     header
 
-                    Spacer(minLength: 20)
+                    ScrollView(showsIndicators: false) {
+                        VStack(alignment: .leading, spacing: 26) {
+                            if books.isEmpty {
+                                emptyLibrary
+                            } else {
+                                if let book = currentBook {
+                                    currentBookSection(book)
+                                }
 
-                    homeActions
+                                if !suggestedBooks.isEmpty {
+                                    suggestionsSection
+                                }
+
+                                // Если книги есть, но чтение ещё
+                                // не начато, показываем библиотеку.
+                                if currentBook == nil {
+                                    VStack(alignment: .leading, spacing: 16) {
+                                        Text("Твоя библиотека")
+                                            .font(
+                                                .system(
+                                                    size: 21,
+                                                    weight: .bold
+                                                )
+                                            )
+                                            .foregroundStyle(.white)
+
+                                        Text("Выбери книгу, чтобы начать чтение.")
+                                            .font(.subheadline)
+                                            .foregroundStyle(
+                                                .white.opacity(0.75)
+                                            )
+
+                                        Button(action: onOpenLibrary) {
+                                            Label(
+                                                "Открыть библиотеку",
+                                                systemImage: "books.vertical"
+                                            )
+                                            .font(.headline)
+                                            .foregroundStyle(.black)
+                                            .padding(.horizontal, 18)
+                                            .padding(.vertical, 12)
+                                            .background(
+                                                .white,
+                                                in: Capsule()
+                                            )
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                    .frame(
+                                        maxWidth: .infinity,
+                                        alignment: .leading
+                                    )
+                                    .padding(20)
+                                    .background(
+                                        .black.opacity(0.72),
+                                        in: RoundedRectangle(
+                                            cornerRadius: 22,
+                                            style: .continuous
+                                        )
+                                    )
+                                }
+                            }
+                        }
+                        .padding(.top, 24)
+                        .padding(.bottom, 24)
+                    }
                 }
                 .padding(.horizontal, 20)
                 .padding(.top, 8)
-                .padding(.bottom, 18)
                 .frame(
                     maxWidth: .infinity,
                     maxHeight: .infinity
@@ -117,42 +192,187 @@ struct HomeView: View {
         .padding(.top, 4)
     }
 
-    // MARK: - Home actions
+    // MARK: - Empty library
 
-    private var homeActions: some View {
-        VStack(spacing: 16) {
-            if currentBook != nil {
-                continueReadingButton
+    private var emptyLibrary: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Твоя библиотека пока пуста")
+                .font(.system(size: 19, weight: .semibold))
+                .foregroundStyle(.white)
+
+            Button(action: onImportBook) {
+                Label(
+                    "Добавить книгу",
+                    systemImage: "plus"
+                )
+                .font(.headline)
+                .foregroundStyle(.black)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 12)
+                .background(.white, in: Capsule())
             }
+            .buttonStyle(.plain)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(20)
+        .background(
+            .black.opacity(0.72),
+            in: RoundedRectangle(
+                cornerRadius: 22,
+                style: .continuous
+            )
+        )
+    }
 
-            currentBookCard
+    // MARK: - Current book
+
+    private func currentBookSection(_ book: Book) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Текущая книга")
+                .font(.system(size: 21, weight: .bold))
+                .foregroundStyle(.white)
+
+            Button(action: onOpenLibrary) {
+                HStack(spacing: 16) {
+                    bookFormatIcon(book, width: 76, height: 116)
+
+                    VStack(alignment: .leading, spacing: 9) {
+                        Text(book.title)
+                            .font(
+                                .system(
+                                    size: 18,
+                                    weight: .semibold
+                                )
+                            )
+                            .foregroundStyle(.white)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+
+                        Text(book.format.rawValue)
+                            .font(.system(size: 14))
+                            .foregroundStyle(.white.opacity(0.65))
+
+                        Spacer(minLength: 0)
+
+                        Text(
+                            "Прогресс чтения · " +
+                            "\(Int(book.readingProgress * 100))%"
+                        )
+                        .font(.system(size: 13))
+                        .foregroundStyle(.white.opacity(0.75))
+
+                        ProgressView(value: book.readingProgress)
+                            .tint(.white)
+                    }
+                    .frame(
+                        maxWidth: .infinity,
+                        minHeight: 116,
+                        alignment: .leading
+                    )
+
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.75))
+                }
+                .padding(16)
+                .background(
+                    .black.opacity(0.72),
+                    in: RoundedRectangle(
+                        cornerRadius: 20,
+                        style: .continuous
+                    )
+                )
+            }
+            .buttonStyle(.plain)
         }
     }
 
-    private var continueReadingButton: some View {
+    // MARK: - Library carousel
+
+    private var suggestionsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Твоя библиотека")
+                .font(.system(size: 21, weight: .bold))
+                .foregroundStyle(.white)
+
+            GeometryReader { geometry in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 12) {
+                        ForEach(suggestedBooks) { book in
+                            suggestionCard(
+                                book,
+                                width: geometry.size.width
+                            )
+                        }
+                    }
+                    .scrollTargetLayout()
+                }
+                .scrollTargetBehavior(.viewAligned)
+            }
+            .frame(height: 148)
+        }
+    }
+
+    private func suggestionCard(
+        _ book: Book,
+        width: CGFloat
+    ) -> some View {
         Button(action: onOpenLibrary) {
-            HStack(spacing: 14) {
-                Image(systemName: "book")
-                    .font(.system(size: 27, weight: .medium))
+            HStack(spacing: 16) {
+                bookFormatIcon(book, width: 76, height: 116)
 
-                Text("Продолжить чтение")
-                    .font(.system(size: 19, weight: .semibold))
+                VStack(alignment: .leading, spacing: 9) {
+                    Text(book.title)
+                        .font(
+                            .system(
+                                size: 18,
+                                weight: .semibold
+                            )
+                        )
+                        .foregroundStyle(.white)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
 
-                Spacer(minLength: 4)
+                    Text(book.format.rawValue)
+                        .font(.system(size: 14))
+                        .foregroundStyle(.white.opacity(0.65))
+
+                    Spacer(minLength: 0)
+
+                    if book.readingProgress > 0 {
+                        Text(
+                            "Прогресс чтения · " +
+                            "\(Int(book.readingProgress * 100))%"
+                        )
+                        .font(.system(size: 13))
+                        .foregroundStyle(.white.opacity(0.75))
+
+                        ProgressView(value: book.readingProgress)
+                            .tint(.white)
+                    } else {
+                        Text("Ещё не прочитана")
+                            .font(.system(size: 13))
+                            .foregroundStyle(.white.opacity(0.65))
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
 
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 19, weight: .medium))
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.75))
             }
-            .foregroundStyle(.black)
-            .padding(.horizontal, 22)
-            .frame(
-                maxWidth: .infinity,
-                minHeight: 72
-            )
+            .padding(16)
+            .frame(width: width, height: 148)
             .background(
-                .white,
+                .black.opacity(0.72),
                 in: RoundedRectangle(
-                    cornerRadius: 22,
+                    cornerRadius: 20,
+                    style: .continuous
+                )
+            )
+            .contentShape(
+                RoundedRectangle(
+                    cornerRadius: 20,
                     style: .continuous
                 )
             )
@@ -160,112 +380,26 @@ struct HomeView: View {
         .buttonStyle(.plain)
     }
 
-    // MARK: - Current book / empty library
+    // MARK: - Book format icon
 
-    @ViewBuilder
-    private var currentBookCard: some View {
-        if let book = currentBook {
-            Button(action: onOpenLibrary) {
-                VStack(alignment: .leading, spacing: 14) {
-                    Text("Текущая книга")
-                        .font(.system(size: 19, weight: .semibold))
-                        .foregroundStyle(.white)
+    private func bookFormatIcon(
+        _ book: Book,
+        width: CGFloat,
+        height: CGFloat
+    ) -> some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 12)
+                .fill(.white.opacity(0.10))
 
-                    HStack(spacing: 16) {
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 10)
-                                .fill(Color.white.opacity(0.08))
-
-                            Image(
-                                systemName: book.format == .cbz
-                                    ? "photo.on.rectangle.angled"
-                                    : "doc.richtext"
-                            )
-                            .font(.system(size: 29))
-                            .foregroundStyle(.white.opacity(0.8))
-                        }
-                        .frame(width: 78, height: 108)
-
-                        VStack(alignment: .leading, spacing: 9) {
-                            Text(book.title)
-                                .font(
-                                    .system(
-                                        size: 18,
-                                        weight: .semibold
-                                    )
-                                )
-                                .foregroundStyle(.white)
-                                .lineLimit(2)
-                                .multilineTextAlignment(.leading)
-
-                            Text(book.format.rawValue)
-                                .font(.system(size: 15))
-                                .foregroundStyle(.white.opacity(0.62))
-
-                            Text(
-                                "Прогресс чтения · " +
-                                "\(Int(book.readingProgress * 100))%"
-                            )
-                            .font(.system(size: 14))
-                            .foregroundStyle(.white.opacity(0.72))
-
-                            ProgressView(value: book.readingProgress)
-                                .tint(.white)
-                        }
-
-                        Spacer(minLength: 0)
-                    }
-                }
-                .padding(18)
-                .frame(
-                    maxWidth: .infinity,
-                    alignment: .leading
-                )
-                .background(
-                    .black.opacity(0.72),
-                    in: RoundedRectangle(
-                        cornerRadius: 22,
-                        style: .continuous
-                    )
-                )
-            }
-            .buttonStyle(.plain)
-        } else {
-            VStack(alignment: .leading, spacing: 16) {
-                Text(
-                    books.isEmpty
-                        ? "Твоя библиотека пока пуста"
-                        : "Начни читать свою первую книгу"
-                )
-                .font(.system(size: 19, weight: .semibold))
-                .foregroundStyle(.white)
-
-                Button(action: onImportBook) {
-                    Label(
-                        "Добавить книгу",
-                        systemImage: "plus"
-                    )
-                    .font(.headline)
-                    .foregroundStyle(.black)
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 12)
-                    .background(.white, in: Capsule())
-                }
-                .buttonStyle(.plain)
-            }
-            .frame(
-                maxWidth: .infinity,
-                alignment: .leading
+            Image(
+                systemName: book.format == .cbz
+                    ? "photo.on.rectangle.angled"
+                    : "doc.richtext"
             )
-            .padding(20)
-            .background(
-                .black.opacity(0.72),
-                in: RoundedRectangle(
-                    cornerRadius: 22,
-                    style: .continuous
-                )
-            )
+            .font(.system(size: 30))
+            .foregroundStyle(.white.opacity(0.85))
         }
+        .frame(width: width, height: height)
     }
 
     // MARK: - Data
