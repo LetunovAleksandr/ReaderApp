@@ -28,8 +28,9 @@ final class ImageEnhancementService {
     private let cache = NSCache<NSString, UIImage>()
 
     private init() {
-        cache.totalCostLimit = 64 * 1024 * 1024
-        cache.countLimit = 12
+        // Ограничиваем память, занимаемую изображениями.
+        cache.totalCostLimit = 32 * 1024 * 1024
+        cache.countLimit = 3
 
         NotificationCenter.default.addObserver(
             forName: UIApplication.didReceiveMemoryWarningNotification,
@@ -83,13 +84,11 @@ final class ImageEnhancementService {
         sharpen.inputImage = colorOutput
         sharpen.sharpness = settings.sharpness
 
-        guard
-            let outputImage = sharpen.outputImage,
-            let cgImage = context.createCGImage(
-                outputImage,
-                from: outputImage.extent
-            )
-        else {
+        guard let outputImage = sharpen.outputImage,
+              let cgImage = context.createCGImage(
+                  outputImage,
+                  from: outputImage.extent
+              ) else {
             return image
         }
 
@@ -105,6 +104,30 @@ final class ImageEnhancementService {
         }
 
         return result
+    }
+
+    /// Удаляет из кэша страницы этой книги,
+    /// которые больше не входят в заданный диапазон.
+    func trimPDFCache(
+        bookID: UUID,
+        pageCount: Int,
+        keepingPageIndices indices: Set<Int>,
+        settings: ImageEnhancementSettings
+    ) {
+        guard pageCount > 0 else {
+            return
+        }
+
+        for index in 0..<pageCount {
+            guard !indices.contains(index) else {
+                continue
+            }
+
+            let key =
+                "pdf-\(bookID.uuidString)-page-\(index)-1400|\(settings.cacheKey)"
+
+            cache.removeObject(forKey: key as NSString)
+        }
     }
 
     func clearCache() {

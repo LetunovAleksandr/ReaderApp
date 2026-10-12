@@ -55,6 +55,7 @@ struct PDFReaderView: View {
         }
         .onChange(of: currentPage) { _, newValue in
             saveProgress(newValue)
+            trimDistantPages(around: newValue)
         }
     }
 
@@ -185,6 +186,29 @@ struct PDFReaderView: View {
             )
         }
     }
+
+    private func trimDistantPages(around page: Int) {
+        guard let document else {
+            return
+        }
+
+        let indices = Set(
+            [
+                page - 1,
+                page,
+                page + 1
+            ].filter {
+                $0 >= 0 && $0 < document.pageCount
+            }
+        )
+
+        ImageEnhancementService.shared.trimPDFCache(
+            bookID: book.id,
+            pageCount: document.pageCount,
+            keepingPageIndices: indices,
+            settings: enhancementSettings
+        )
+    }
 }
 
 private struct PDFPageView: View {
@@ -196,6 +220,7 @@ private struct PDFPageView: View {
     let availableSize: CGSize
 
     @State private var renderedImage: UIImage?
+    @State private var isRendering = false
 
     private var shouldRender: Bool {
         abs(pageIndex - currentPage) <= 1
@@ -235,7 +260,8 @@ private struct PDFPageView: View {
     @MainActor
     private func renderPageIfNeeded() async {
         guard shouldRender,
-              renderedImage == nil else {
+              renderedImage == nil,
+              !isRendering else {
             return
         }
 
@@ -278,10 +304,17 @@ private struct PDFPageView: View {
             )
         }
 
+        isRendering = true
+        defer {
+            isRendering = false
+        }
+
         let settings = settings
 
         let image = await Task.detached(
-            priority: .userInitiated
+            priority: pageIndex == currentPage
+                ? .userInitiated
+                : .utility
         ) {
             PDFPageRenderer.render(
                 page: page,
