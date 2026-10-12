@@ -9,12 +9,22 @@ struct HomeView: View {
     @State private var books: [Book] = []
     @State private var loadError: String?
 
+    @AppStorage("readerApp.currentBookID")
+    private var currentBookID = ""
+
     private let storage = BookStorageService()
 
     // MARK: - Book selection
 
     private var currentBook: Book? {
-        books
+        if let id = UUID(uuidString: currentBookID),
+           let selectedBook = books.first(
+               where: { $0.id == id }
+           ) {
+            return selectedBook
+        }
+
+        return books
             .filter { $0.readingProgress > 0 }
             .max { $0.dateAdded < $1.dateAdded }
     }
@@ -88,7 +98,9 @@ struct HomeView: View {
                                 }
 
                                 if currentBook == nil {
-                                    Button(action: onOpenLibrary) {
+                                    Button(
+                                        action: onOpenLibrary
+                                    ) {
                                         Label(
                                             "Открыть библиотеку",
                                             systemImage: "books.vertical"
@@ -154,18 +166,26 @@ struct HomeView: View {
     // MARK: - Header
 
     private var header: some View {
-        HStack(alignment: .center, spacing: 12) {
+        HStack(
+            alignment: .center,
+            spacing: 12
+        ) {
             Image("ReaderAppLogo")
                 .resizable()
                 .scaledToFit()
-                .frame(maxWidth: 250, maxHeight: 70)
+                .frame(
+                    maxWidth: 250,
+                    maxHeight: 70
+                )
                 .accessibilityLabel("ReaderApp")
 
             Spacer(minLength: 0)
 
             Button(action: onImportBook) {
                 Image(systemName: "plus")
-                    .font(.system(size: 28, weight: .regular))
+                    .font(
+                        .system(size: 28, weight: .regular)
+                    )
                     .foregroundStyle(.white)
                     .frame(width: 44, height: 44)
                     .contentShape(Rectangle())
@@ -179,9 +199,14 @@ struct HomeView: View {
     // MARK: - Empty library
 
     private var emptyLibrary: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(
+            alignment: .leading,
+            spacing: 16
+        ) {
             Text("Твоя библиотека пока пуста")
-                .font(.system(size: 19, weight: .semibold))
+                .font(
+                    .system(size: 19, weight: .semibold)
+                )
                 .foregroundStyle(.white)
 
             Button(action: onImportBook) {
@@ -193,11 +218,17 @@ struct HomeView: View {
                 .foregroundStyle(.black)
                 .padding(.horizontal, 18)
                 .padding(.vertical, 12)
-                .background(.white, in: Capsule())
+                .background(
+                    .white,
+                    in: Capsule()
+                )
             }
             .buttonStyle(.plain)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(
+            maxWidth: .infinity,
+            alignment: .leading
+        )
         .padding(20)
         .background(
             .black.opacity(0.72),
@@ -213,9 +244,14 @@ struct HomeView: View {
     private func currentBookSection(
         _ book: Book
     ) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(
+            alignment: .leading,
+            spacing: 12
+        ) {
             Text("Текущая книга")
-                .font(.system(size: 21, weight: .bold))
+                .font(
+                    .system(size: 21, weight: .bold)
+                )
                 .foregroundStyle(.white)
 
             Button {
@@ -245,18 +281,25 @@ struct HomeView: View {
 
                         Text(book.format.rawValue)
                             .font(.system(size: 14))
-                            .foregroundStyle(.white.opacity(0.65))
+                            .foregroundStyle(
+                                .white.opacity(0.65)
+                            )
 
                         Spacer(minLength: 0)
 
                         Text(
-                            "Прогресс чтения · \(Int(book.readingProgress * 100))%"
+                            "Прогресс чтения · " +
+                            "\(Int(book.readingProgress * 100))%"
                         )
                         .font(.system(size: 13))
-                        .foregroundStyle(.white.opacity(0.75))
+                        .foregroundStyle(
+                            .white.opacity(0.75)
+                        )
 
-                        ProgressView(value: book.readingProgress)
-                            .tint(.white)
+                        ProgressView(
+                            value: book.readingProgress
+                        )
+                        .tint(.white)
                     }
                     .frame(
                         maxWidth: .infinity,
@@ -280,13 +323,24 @@ struct HomeView: View {
     // MARK: - Library carousel
 
     private var librarySection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(
+            alignment: .leading,
+            spacing: 12
+        ) {
             Text("Твоя библиотека")
-                .font(.system(size: 21, weight: .bold))
+                .font(
+                    .system(size: 21, weight: .bold)
+                )
                 .foregroundStyle(.white)
 
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(alignment: .top, spacing: 14) {
+            ScrollView(
+                .horizontal,
+                showsIndicators: false
+            ) {
+                HStack(
+                    alignment: .top,
+                    spacing: 14
+                ) {
                     ForEach(libraryBooks) { book in
                         libraryCard(book)
                     }
@@ -295,11 +349,16 @@ struct HomeView: View {
         }
     }
 
-    private func libraryCard(_ book: Book) -> some View {
+    private func libraryCard(
+        _ book: Book
+    ) -> some View {
         Button {
             onOpenBook(book)
         } label: {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(
+                alignment: .leading,
+                spacing: 8
+            ) {
                 BookCoverView(
                     book: book,
                     width: 132,
@@ -307,26 +366,37 @@ struct HomeView: View {
                 )
 
                 Text(book.title)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(
+                        .system(size: 14, weight: .semibold)
+                    )
                     .foregroundStyle(.white)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
-                    .frame(width: 132, alignment: .leading)
+                    .frame(
+                        width: 132,
+                        alignment: .leading
+                    )
 
                 if book.readingProgress > 0 {
-                    ProgressView(value: book.readingProgress)
-                        .tint(.white)
-                        .frame(width: 132)
+                    ProgressView(
+                        value: book.readingProgress
+                    )
+                    .tint(.white)
+                    .frame(width: 132)
 
                     Text(
                         "\(Int(book.readingProgress * 100))% прочитано"
                     )
                     .font(.system(size: 11))
-                    .foregroundStyle(.white.opacity(0.7))
+                    .foregroundStyle(
+                        .white.opacity(0.7)
+                    )
                 } else {
                     Text("Ещё не прочитана")
                         .font(.system(size: 11))
-                        .foregroundStyle(.white.opacity(0.65))
+                        .foregroundStyle(
+                            .white.opacity(0.65)
+                        )
                 }
             }
             .padding(10)
@@ -364,9 +434,14 @@ struct HomeView: View {
                     : "doc.richtext"
             )
             .font(.system(size: 30))
-            .foregroundStyle(.white.opacity(0.85))
+            .foregroundStyle(
+                .white.opacity(0.85)
+            )
         }
-        .frame(width: width, height: height)
+        .frame(
+            width: width,
+            height: height
+        )
     }
 
     // MARK: - Data
