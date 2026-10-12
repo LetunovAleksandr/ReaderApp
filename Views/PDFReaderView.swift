@@ -55,7 +55,10 @@ struct PDFReaderView: View {
         }
         .onChange(of: currentPage) { _, newValue in
             saveProgress(newValue)
-            trimDistantPages(around: newValue)
+            updateRenderWindow(around: newValue)
+        }
+        .onDisappear {
+            PDFRenderScheduler.shared.cancelAll()
         }
     }
 
@@ -158,6 +161,8 @@ struct PDFReaderView: View {
         )
 
         document = pdf
+
+        updateRenderWindow(around: currentPage)
     }
 
     private func saveProgress(_ page: Int) {
@@ -187,7 +192,7 @@ struct PDFReaderView: View {
         }
     }
 
-    private func trimDistantPages(around page: Int) {
+    private func updateRenderWindow(around page: Int) {
         guard let document else {
             return
         }
@@ -201,6 +206,17 @@ struct PDFReaderView: View {
                 $0 >= 0 && $0 < document.pageCount
             }
         )
+
+        let keys = Set(
+            indices.map {
+                PDFPageRenderer.cacheKey(
+                    bookID: book.id,
+                    pageIndex: $0
+                )
+            }
+        )
+
+        PDFRenderScheduler.shared.keepPendingRequests(for: keys)
 
         ImageEnhancementService.shared.trimPDFCache(
             bookID: book.id,
@@ -220,10 +236,13 @@ private struct PDFPageView: View {
     let availableSize: CGSize
 
     @State private var renderedImage: UIImage?
-    @State private var isRendering = false
+
+    private var distance: Int {
+        abs(pageIndex - currentPage)
+    }
 
     private var shouldRender: Bool {
-        abs(pageIndex - currentPage) <= 1
+        distance <= 1
     }
 
     var body: some View {
@@ -247,7 +266,7 @@ private struct PDFPageView: View {
             width: availableSize.width,
             height: availableSize.height
         )
-        .task(id: shouldRender) {
+        .task(id: distance) {
             guard shouldRender else {
                 renderedImage = nil
                 return
@@ -260,13 +279,14 @@ private struct PDFPageView: View {
     @MainActor
     private func renderPageIfNeeded() async {
         guard shouldRender,
-              renderedImage == nil,
-              !isRendering else {
+              renderedImage == nil else {
             return
         }
 
-        let key =
-            "pdf-\(bookID.uuidString)-page-\(pageIndex)-1400"
+        let key = PDFPageRenderer.cacheKey(
+            bookID: bookID,
+            pageIndex: pageIndex
+        )
 
         if let cached = ImageEnhancementService.shared.cachedImage(
             for: key,
@@ -287,8 +307,8 @@ private struct PDFPageView: View {
             return
         }
 
-        let aspectRatio = bounds.width / bounds.height
         let maxDimension: CGFloat = 1400
+        let aspectRatio = bounds.width / bounds.height
 
         let size: CGSize
 
@@ -304,25 +324,17 @@ private struct PDFPageView: View {
             )
         }
 
-        isRendering = true
-        defer {
-            isRendering = false
-        }
-
-        let settings = settings
-
-        let image = await Task.detached(
-            priority: pageIndex == currentPage
-                ? .userInitiated
-                : .utility
+        let image = await PDFRenderScheduler.shared.render(
+            key: key,
+            priority: distance == 0 ? 0 : 1
         ) {
-            PDFPageRenderer.render(
+            PDFPageRenderer.renderSynchronously(
                 page: page,
                 size: size,
                 cacheKey: key,
                 settings: settings
             )
-        }.value
+        }
 
         guard !Task.isCancelled,
               shouldRender else {
@@ -334,7 +346,14 @@ private struct PDFPageView: View {
 }
 
 private enum PDFPageRenderer {
-    nonisolated static func render(
+    static func cacheKey(
+        bookID: UUID,
+        pageIndex: Int
+    ) -> String {
+        "pdf-\(bookID.uuidString)-page-\(pageIndex)-1400"
+    }
+
+    nonisolated static func renderSynchronously(
         page: PDFPage,
         size: CGSize,
         cacheKey: String,
@@ -395,5 +414,201 @@ private enum PDFPageRenderer {
             cacheKey: cacheKey,
             settings: settings
         )
+    }
+}
+
+private final class PDFRenderRequest {
+    let key: String
+    let priority: Int
+    let work: () -> UIImage?
+
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<UIImage?, Never>?
+    private var completed = false
+
+    var operation: Operation?
+
+    init(
+        key: String,
+        priority: Int,
+        work: @escaping () -> UIImage?,
+        continuation: CheckedContinuation<UIImage?, Never>
+    ) {
+        self.key = key
+        self.priority = priority
+        self.work = work
+        self.continuation = continuation
+    }
+
+    func finish(_ image: UIImage?) {
+        lock.lock()
+
+        guard !completed else {
+            lock.unlock()
+            return
+        }
+
+        completed = true
+        let continuation = self.continuation
+        self.continuation = nil
+
+        lock.unlock()
+
+        continuation?.resume(returning: image)
+    }
+
+    func cancel() {
+        operation?.cancel()
+        finish(nil)
+    }
+}
+
+private final class PDFRenderScheduler {
+    static let shared = PDFRenderScheduler()
+
+    private let lock = NSLock()
+
+    private let queue: OperationQueue = {
+        let queue = OperationQueue()
+        queue.name = "ReaderApp.PDFRenderQueue"
+        queue.maxConcurrentOperationCount = 1
+        queue.qualityOfService = .userInitiated
+        return queue
+    }()
+
+    private var pending: [String: PDFRenderRequest] = [:]
+    private var runningKeys = Set<String>()
+
+    private init() {}
+
+    func render(
+        key: String,
+        priority: Int,
+        work: @escaping () -> UIImage?
+    ) async -> UIImage? {
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                let request = PDFRenderRequest(
+                    key: key,
+                    priority: priority,
+                    work: work,
+                    continuation: continuation
+                )
+
+                lock.lock()
+
+                if let existing = pending[key] {
+                    lock.unlock()
+                    existing.cancel()
+                    enqueue(request)
+                    return
+                }
+
+                if runningKeys.contains(key) {
+                    lock.unlock()
+                    request.finish(nil)
+                    return
+                }
+
+                pending[key] = request
+                lock.unlock()
+
+                enqueueOperation(for: request)
+            }
+        } onCancel: {
+            self.cancel(key: key)
+        }
+    }
+
+    private func enqueue(_ request: PDFRenderRequest) {
+        lock.lock()
+        pending[request.key] = request
+        lock.unlock()
+
+        enqueueOperation(for: request)
+    }
+
+    private func enqueueOperation(for request: PDFRenderRequest) {
+        let operation = BlockOperation { [weak self, weak request] in
+            guard let self,
+                  let request else {
+                return
+            }
+
+            self.lock.lock()
+
+            let isCurrent = self.pending[request.key] === request
+
+            if isCurrent {
+                self.pending.removeValue(forKey: request.key)
+                self.runningKeys.insert(request.key)
+            }
+
+            self.lock.unlock()
+
+            guard isCurrent, !request.operation!.isCancelled else {
+                request.finish(nil)
+                return
+            }
+
+            let image = request.work()
+            request.finish(image)
+
+            self.lock.lock()
+            self.runningKeys.remove(request.key)
+            self.lock.unlock()
+        }
+
+        operation.queuePriority = request.priority == 0 ? .veryHigh : .normal
+        request.operation = operation
+
+        lock.lock()
+        let stillPending = pending[request.key] === request
+        lock.unlock()
+
+        if stillPending {
+            queue.addOperation(operation)
+        } else {
+            request.cancel()
+        }
+    }
+
+    func cancel(key: String) {
+        lock.lock()
+        let request = pending.removeValue(forKey: key)
+        lock.unlock()
+
+        request?.cancel()
+    }
+
+    func keepPendingRequests(for keys: Set<String>) {
+        lock.lock()
+
+        let obsolete = pending.values.filter {
+            !keys.contains($0.key)
+        }
+
+        for request in obsolete {
+            pending.removeValue(forKey: request.key)
+        }
+
+        lock.unlock()
+
+        obsolete.forEach {
+            $0.cancel()
+        }
+    }
+
+    func cancelAll() {
+        lock.lock()
+
+        let requests = Array(pending.values)
+        pending.removeAll()
+
+        lock.unlock()
+
+        requests.forEach {
+            $0.cancel()
+        }
     }
 }
