@@ -72,7 +72,7 @@ struct PDFReaderView: View {
                             document: document,
                             bookID: book.id,
                             pageIndex: index,
-                            isCurrentPage: index == currentPage,
+                            currentPage: currentPage,
                             settings: enhancementSettings,
                             availableSize: geometry.size
                         )
@@ -191,12 +191,15 @@ private struct PDFPageView: View {
     let document: PDFDocument
     let bookID: UUID
     let pageIndex: Int
-    let isCurrentPage: Bool
+    let currentPage: Int
     let settings: ImageEnhancementSettings
     let availableSize: CGSize
 
     @State private var renderedImage: UIImage?
-    @State private var isRendering = false
+
+    private var shouldRender: Bool {
+        abs(pageIndex - currentPage) <= 1
+    }
 
     var body: some View {
         ZStack {
@@ -210,7 +213,7 @@ private struct PDFPageView: View {
                         width: availableSize.width,
                         height: availableSize.height
                     )
-            } else if isCurrentPage && isRendering {
+            } else if pageIndex == currentPage {
                 ProgressView()
                     .tint(.white)
             }
@@ -219,8 +222,8 @@ private struct PDFPageView: View {
             width: availableSize.width,
             height: availableSize.height
         )
-        .task(id: isCurrentPage) {
-            guard isCurrentPage else {
+        .task(id: shouldRender) {
+            guard shouldRender else {
                 renderedImage = nil
                 return
             }
@@ -231,9 +234,8 @@ private struct PDFPageView: View {
 
     @MainActor
     private func renderPageIfNeeded() async {
-        guard isCurrentPage,
-              renderedImage == nil,
-              !isRendering else {
+        guard shouldRender,
+              renderedImage == nil else {
             return
         }
 
@@ -276,11 +278,6 @@ private struct PDFPageView: View {
             )
         }
 
-        isRendering = true
-        defer {
-            isRendering = false
-        }
-
         let settings = settings
 
         let image = await Task.detached(
@@ -295,7 +292,7 @@ private struct PDFPageView: View {
         }.value
 
         guard !Task.isCancelled,
-              isCurrentPage else {
+              shouldRender else {
             return
         }
 
