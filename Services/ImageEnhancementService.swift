@@ -106,30 +106,6 @@ final class ImageEnhancementService {
         return result
     }
 
-    /// Удаляет из кэша страницы этой книги,
-    /// которые больше не входят в заданный диапазон.
-    func trimPDFCache(
-        bookID: UUID,
-        pageCount: Int,
-        keepingPageIndices indices: Set<Int>,
-        settings: ImageEnhancementSettings
-    ) {
-        guard pageCount > 0 else {
-            return
-        }
-
-        for index in 0..<pageCount {
-            guard !indices.contains(index) else {
-                continue
-            }
-
-            let key =
-                "pdf-\(bookID.uuidString)-page-\(index)-1400|\(settings.cacheKey)"
-
-            cache.removeObject(forKey: key as NSString)
-        }
-    }
-
     func clearCache() {
         cache.removeAllObjects()
     }

@@ -13,6 +13,7 @@ struct PDFReaderView: View {
     @State private var document: PDFDocument?
     @State private var currentPage = 0
     @State private var loadError = false
+    @State private var progressSaveWorkItem: DispatchWorkItem?
 
     private let storage = BookStorageService()
 
@@ -54,10 +55,13 @@ struct PDFReaderView: View {
             loadDocument()
         }
         .onChange(of: currentPage) { _, newValue in
-            saveProgress(newValue)
+            scheduleProgressSave(for: newValue)
             updateRenderWindow(around: newValue)
         }
         .onDisappear {
+            progressSaveWorkItem?.cancel()
+            progressSaveWorkItem = nil
+            saveProgress(currentPage)
             PDFRenderScheduler.shared.cancelAll()
         }
     }
@@ -165,6 +169,23 @@ struct PDFReaderView: View {
         updateRenderWindow(around: currentPage)
     }
 
+    /// Сохраняем прогресс после короткой паузы, а не при каждом свайпе.
+    /// Финальная позиция дополнительно сохраняется при закрытии ридера.
+    private func scheduleProgressSave(for page: Int) {
+        progressSaveWorkItem?.cancel()
+
+        let workItem = DispatchWorkItem {
+            saveProgress(page)
+        }
+
+        progressSaveWorkItem = workItem
+
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + 0.4,
+            execute: workItem
+        )
+    }
+
     private func saveProgress(_ page: Int) {
         guard let document,
               document.pageCount > 0 else {
@@ -226,12 +247,6 @@ struct PDFReaderView: View {
             prioritizing: currentKey
         )
 
-        ImageEnhancementService.shared.trimPDFCache(
-            bookID: book.id,
-            pageCount: document.pageCount,
-            keepingPageIndices: indices,
-            settings: enhancementSettings
-        )
     }
 }
 
@@ -244,7 +259,6 @@ private struct PDFPageView: View {
     let availableSize: CGSize
 
     @State private var renderedImage: UIImage?
-    @State private var isRendering = false
     @State private var renderFailed = false
     @State private var renderAttempt = 0
 
@@ -289,6 +303,14 @@ private struct PDFPageView: View {
             width: availableSize.width,
             height: availableSize.height
         )
+        .onChange(of: isCurrentPage) { _, isCurrent in
+            if !isCurrent {
+                // Не удерживаем декодированные изображения всех просмотренных
+                // страниц в состоянии SwiftUI.
+                renderedImage = nil
+                renderFailed = false
+            }
+        }
         .task(id: "\(isCurrentPage)-\(renderAttempt)") {
             guard isCurrentPage else {
                 return
@@ -319,33 +341,9 @@ private struct PDFPageView: View {
             return
         }
 
-        let bounds = page.bounds(for: .mediaBox)
-
-        guard bounds.width > 0, bounds.height > 0 else {
+        guard let size = PDFPageRenderer.renderSize(for: page) else {
             renderFailed = true
             return
-        }
-
-        let aspectRatio = bounds.width / bounds.height
-        let maxDimension: CGFloat = 1400
-
-        let size: CGSize
-
-        if aspectRatio >= 1 {
-            size = CGSize(
-                width: maxDimension,
-                height: max(1, maxDimension / aspectRatio)
-            )
-        } else {
-            size = CGSize(
-                width: max(1, maxDimension * aspectRatio),
-                height: maxDimension
-            )
-        }
-
-        isRendering = true
-        defer {
-            isRendering = false
         }
 
         let image = await PDFRenderScheduler.shared.render(
@@ -367,8 +365,49 @@ private struct PDFPageView: View {
         if let image {
             renderedImage = image
             renderFailed = false
+            prefetchAdjacentPages()
         } else {
             renderFailed = true
+        }
+    }
+
+    /// Заранее рендерим соседние страницы после загрузки текущей.
+    /// Так следующий свайп чаще показывает уже подготовленное изображение.
+    private func prefetchAdjacentPages() {
+        let adjacentIndices = [pageIndex - 1, pageIndex + 1]
+            .filter { $0 >= 0 && $0 < document.pageCount }
+
+        for index in adjacentIndices {
+            let key = PDFPageRenderer.cacheKey(
+                bookID: bookID,
+                pageIndex: index
+            )
+
+            if ImageEnhancementService.shared.cachedImage(
+                for: key,
+                settings: settings
+            ) != nil {
+                continue
+            }
+
+            guard let page = document.page(at: index),
+                  let size = PDFPageRenderer.renderSize(for: page) else {
+                continue
+            }
+
+            Task {
+                _ = await PDFRenderScheduler.shared.render(
+                    key: key,
+                    priority: 10
+                ) {
+                    PDFPageRenderer.render(
+                        page: page,
+                        size: size,
+                        cacheKey: key,
+                        settings: settings
+                    )
+                }
+            }
         }
     }
 }
@@ -376,6 +415,29 @@ private struct PDFPageView: View {
 private enum PDFPageRenderer {
     static func cacheKey(bookID: UUID, pageIndex: Int) -> String {
         "pdf-\(bookID.uuidString)-page-\(pageIndex)-1400"
+    }
+
+    static func renderSize(for page: PDFPage) -> CGSize? {
+        let bounds = page.bounds(for: .mediaBox)
+
+        guard bounds.width > 0, bounds.height > 0 else {
+            return nil
+        }
+
+        let aspectRatio = bounds.width / bounds.height
+        let maxDimension: CGFloat = 1400
+
+        if aspectRatio >= 1 {
+            return CGSize(
+                width: maxDimension,
+                height: max(1, maxDimension / aspectRatio)
+            )
+        }
+
+        return CGSize(
+            width: max(1, maxDimension * aspectRatio),
+            height: maxDimension
+        )
     }
 
     nonisolated static func render(
