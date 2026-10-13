@@ -26,11 +26,16 @@ final class ImageEnhancementService {
 
     private let context = CIContext()
     private let cache = NSCache<NSString, UIImage>()
+    private let previewCache = NSCache<NSString, UIImage>()
 
     private init() {
         // Ограничиваем память, занимаемую изображениями.
         cache.totalCostLimit = 32 * 1024 * 1024
         cache.countLimit = 3
+
+        // Быстрые превью хранятся отдельно и имеют меньший лимит памяти.
+        previewCache.totalCostLimit = 8 * 1024 * 1024
+        previewCache.countLimit = 3
 
         NotificationCenter.default.addObserver(
             forName: UIApplication.didReceiveMemoryWarningNotification,
@@ -47,6 +52,19 @@ final class ImageEnhancementService {
     ) -> UIImage? {
         let fullKey = "\(key)|\(settings.cacheKey)" as NSString
         return cache.object(forKey: fullKey)
+    }
+
+    func cachedPreview(for key: String) -> UIImage? {
+        previewCache.object(forKey: key as NSString)
+    }
+
+    func storePreview(_ image: UIImage, for key: String) {
+        guard let cgImage = image.cgImage else {
+            return
+        }
+
+        let cost = cgImage.bytesPerRow * cgImage.height
+        previewCache.setObject(image, forKey: key as NSString, cost: cost)
     }
 
     func enhance(
@@ -108,5 +126,6 @@ final class ImageEnhancementService {
 
     func clearCache() {
         cache.removeAllObjects()
+        previewCache.removeAllObjects()
     }
 }

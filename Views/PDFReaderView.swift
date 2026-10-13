@@ -14,6 +14,7 @@ struct PDFReaderView: View {
     @State private var currentPage = 0
     @State private var loadError = false
     @State private var progressSaveWorkItem: DispatchWorkItem?
+    @State private var readingDirection = 1
 
     private let storage = BookStorageService()
 
@@ -54,9 +55,13 @@ struct PDFReaderView: View {
         .task {
             loadDocument()
         }
-        .onChange(of: currentPage) { _, newValue in
+        .onChange(of: currentPage) { oldValue, newValue in
+            readingDirection = newValue >= oldValue ? 1 : -1
             scheduleProgressSave(for: newValue)
-            updateRenderWindow(around: newValue)
+            updateRenderWindow(
+                around: newValue,
+                direction: readingDirection
+            )
         }
         .onDisappear {
             progressSaveWorkItem?.cancel()
@@ -81,6 +86,7 @@ struct PDFReaderView: View {
                             bookID: book.id,
                             pageIndex: index,
                             isCurrentPage: index == currentPage,
+                            prefetchDirection: readingDirection,
                             settings: enhancementSettings,
                             availableSize: geometry.size
                         )
@@ -166,7 +172,10 @@ struct PDFReaderView: View {
 
         document = pdf
 
-        updateRenderWindow(around: currentPage)
+        updateRenderWindow(
+            around: currentPage,
+            direction: readingDirection
+        )
     }
 
     /// Сохраняем прогресс после короткой паузы, а не при каждом свайпе.
@@ -213,40 +222,38 @@ struct PDFReaderView: View {
         }
     }
 
-    private func updateRenderWindow(around page: Int) {
+    /// Держим в очереди текущую страницу и две страницы по направлению свайпа.
+    /// Следующая страница получает более высокий приоритет, чем дальняя.
+    private func updateRenderWindow(
+        around page: Int,
+        direction: Int
+    ) {
         guard let document else {
             return
         }
 
-        let indices = Set(
-            [
-                page - 1,
-                page,
-                page + 1
-            ].filter {
-                $0 >= 0 && $0 < document.pageCount
-            }
-        )
+        let candidates: [(index: Int, previewPriority: Int, fullPriority: Int)] = [
+            (page, 120, 110),
+            (page + direction, 100, 90),
+            (page + direction * 2, 80, 70)
+        ]
 
-        let keys = Set(
-            indices.map {
-                PDFPageRenderer.cacheKey(
-                    bookID: book.id,
-                    pageIndex: $0
-                )
-            }
-        )
+        var priorities: [String: Int] = [:]
 
-        let currentKey = PDFPageRenderer.cacheKey(
-            bookID: book.id,
-            pageIndex: page
-        )
+        for candidate in candidates
+        where candidate.index >= 0 && candidate.index < document.pageCount {
+            let fullKey = PDFPageRenderer.cacheKey(
+                bookID: book.id,
+                pageIndex: candidate.index
+            )
+            let previewKey = PDFPageRenderer.previewCacheKey(for: fullKey)
+            priorities[previewKey] = candidate.previewPriority
+            priorities[fullKey] = candidate.fullPriority
+        }
 
         PDFRenderScheduler.shared.keepPendingRequests(
-            for: keys,
-            prioritizing: currentKey
+            withPriorities: priorities
         )
-
     }
 }
 
@@ -255,6 +262,7 @@ private struct PDFPageView: View {
     let bookID: UUID
     let pageIndex: Int
     let isCurrentPage: Bool
+    let prefetchDirection: Int
     let settings: ImageEnhancementSettings
     let availableSize: CGSize
 
@@ -322,33 +330,72 @@ private struct PDFPageView: View {
 
     @MainActor
     private func renderPageIfNeeded() async {
-        guard isCurrentPage, renderedImage == nil else {
+        guard isCurrentPage else {
+            return
+        }
+
+        let service = ImageEnhancementService.shared
+
+        if let cached = service.cachedImage(
+            for: cacheKey,
+            settings: settings
+        ) {
+            renderedImage = cached
+            renderFailed = false
+            prefetchAdjacentPages()
             return
         }
 
         renderFailed = false
 
-        if let cached = ImageEnhancementService.shared.cachedImage(
-            for: cacheKey,
-            settings: settings
+        // Сначала показываем небольшое превью, если оно уже подготовлено.
+        if let preview = service.cachedPreview(
+            for: PDFPageRenderer.previewCacheKey(for: cacheKey)
         ) {
-            renderedImage = cached
+            renderedImage = preview
+        } else {
+            guard let page = document.page(at: pageIndex),
+                  let previewSize = PDFPageRenderer.previewSize(for: page) else {
+                renderFailed = true
+                return
+            }
+
+            let previewKey = PDFPageRenderer.previewCacheKey(for: cacheKey)
+            let preview = await PDFRenderScheduler.shared.render(
+                key: previewKey,
+                priority: 120
+            ) {
+                PDFPageRenderer.renderPreview(
+                    page: page,
+                    size: previewSize,
+                    previewKey: previewKey
+                )
+            }
+
+            guard !Task.isCancelled, isCurrentPage else {
+                return
+            }
+
+            if let preview {
+                renderedImage = preview
+            }
+        }
+
+        // Запускаем подготовку следующих превью сразу после получения
+        // текущего превью, не дожидаясь полноразмерного рендеринга.
+        prefetchAdjacentPages()
+
+        guard !Task.isCancelled, isCurrentPage,
+              let page = document.page(at: pageIndex),
+              let size = PDFPageRenderer.renderSize(for: page) else {
             return
         }
 
-        guard let page = document.page(at: pageIndex) else {
-            renderFailed = true
-            return
-        }
-
-        guard let size = PDFPageRenderer.renderSize(for: page) else {
-            renderFailed = true
-            return
-        }
-
+        // Превью уже видно. Полное улучшенное изображение заменит его,
+        // когда рендеринг закончится, без индикатора поверх страницы.
         let image = await PDFRenderScheduler.shared.render(
             key: cacheKey,
-            priority: 100
+            priority: 110
         ) {
             PDFPageRenderer.render(
                 page: page,
@@ -366,46 +413,67 @@ private struct PDFPageView: View {
             renderedImage = image
             renderFailed = false
             prefetchAdjacentPages()
-        } else {
+        } else if renderedImage == nil {
             renderFailed = true
         }
     }
 
-    /// Заранее рендерим соседние страницы после загрузки текущей.
-    /// Так следующий свайп чаще показывает уже подготовленное изображение.
+    /// В первую очередь готовим маленькие превью следующих страниц.
+    /// Полные изображения ставим в очередь после превью.
     private func prefetchAdjacentPages() {
-        let adjacentIndices = [pageIndex - 1, pageIndex + 1]
-            .filter { $0 >= 0 && $0 < document.pageCount }
+        let candidates = [
+            (pageIndex + prefetchDirection, 100, 90),
+            (pageIndex + prefetchDirection * 2, 80, 70)
+        ].filter {
+            $0.0 >= 0 && $0.0 < document.pageCount
+        }
 
-        for index in adjacentIndices {
-            let key = PDFPageRenderer.cacheKey(
+        for (index, previewPriority, fullPriority) in candidates {
+            guard let page = document.page(at: index),
+                  let previewSize = PDFPageRenderer.previewSize(for: page),
+                  let fullSize = PDFPageRenderer.renderSize(for: page) else {
+                continue
+            }
+
+            let fullKey = PDFPageRenderer.cacheKey(
                 bookID: bookID,
                 pageIndex: index
             )
+            let previewKey = PDFPageRenderer.previewCacheKey(for: fullKey)
+
+            if ImageEnhancementService.shared.cachedPreview(
+                for: previewKey
+            ) == nil {
+                Task {
+                    _ = await PDFRenderScheduler.shared.render(
+                        key: previewKey,
+                        priority: previewPriority
+                    ) {
+                        PDFPageRenderer.renderPreview(
+                            page: page,
+                            size: previewSize,
+                            previewKey: previewKey
+                        )
+                    }
+                }
+            }
 
             if ImageEnhancementService.shared.cachedImage(
-                for: key,
+                for: fullKey,
                 settings: settings
-            ) != nil {
-                continue
-            }
-
-            guard let page = document.page(at: index),
-                  let size = PDFPageRenderer.renderSize(for: page) else {
-                continue
-            }
-
-            Task {
-                _ = await PDFRenderScheduler.shared.render(
-                    key: key,
-                    priority: 10
-                ) {
-                    PDFPageRenderer.render(
-                        page: page,
-                        size: size,
-                        cacheKey: key,
-                        settings: settings
-                    )
+            ) == nil {
+                Task {
+                    _ = await PDFRenderScheduler.shared.render(
+                        key: fullKey,
+                        priority: fullPriority
+                    ) {
+                        PDFPageRenderer.render(
+                            page: page,
+                            size: fullSize,
+                            cacheKey: fullKey,
+                            settings: settings
+                        )
+                    }
                 }
             }
         }
@@ -414,10 +482,25 @@ private struct PDFPageView: View {
 
 private enum PDFPageRenderer {
     static func cacheKey(bookID: UUID, pageIndex: Int) -> String {
-        "pdf-\(bookID.uuidString)-page-\(pageIndex)-1400"
+        "pdf-\(bookID.uuidString)-page-\(pageIndex)-1200"
+    }
+
+    static func previewCacheKey(for fullKey: String) -> String {
+        "\(fullKey)-preview-600"
+    }
+
+    static func previewSize(for page: PDFPage) -> CGSize? {
+        renderSize(for: page, maxDimension: 600)
     }
 
     static func renderSize(for page: PDFPage) -> CGSize? {
+        renderSize(for: page, maxDimension: 1200)
+    }
+
+    private static func renderSize(
+        for page: PDFPage,
+        maxDimension: CGFloat
+    ) -> CGSize? {
         let bounds = page.bounds(for: .mediaBox)
 
         guard bounds.width > 0, bounds.height > 0 else {
@@ -425,7 +508,6 @@ private enum PDFPageRenderer {
         }
 
         let aspectRatio = bounds.width / bounds.height
-        let maxDimension: CGFloat = 1400
 
         if aspectRatio >= 1 {
             return CGSize(
@@ -438,6 +520,28 @@ private enum PDFPageRenderer {
             width: max(1, maxDimension * aspectRatio),
             height: maxDimension
         )
+    }
+
+    nonisolated static func renderPreview(
+        page: PDFPage,
+        size: CGSize,
+        previewKey: String
+    ) -> UIImage? {
+        if let cached = ImageEnhancementService.shared.cachedPreview(
+            for: previewKey
+        ) {
+            return cached
+        }
+
+        guard let image = drawPage(page: page, size: size) else {
+            return nil
+        }
+
+        ImageEnhancementService.shared.storePreview(
+            image,
+            for: previewKey
+        )
+        return image
     }
 
     nonisolated static func render(
@@ -453,6 +557,21 @@ private enum PDFPageRenderer {
             return cached
         }
 
+        guard let originalImage = drawPage(page: page, size: size) else {
+            return nil
+        }
+
+        return ImageEnhancementService.shared.enhance(
+            originalImage,
+            cacheKey: cacheKey,
+            settings: settings
+        )
+    }
+
+    private nonisolated static func drawPage(
+        page: PDFPage,
+        size: CGSize
+    ) -> UIImage? {
         let bounds = page.bounds(for: .mediaBox)
 
         guard bounds.width > 0,
@@ -464,7 +583,7 @@ private enum PDFPageRenderer {
 
         let renderer = UIGraphicsImageRenderer(size: size)
 
-        let originalImage = renderer.image { rendererContext in
+        return renderer.image { rendererContext in
             UIColor.white.setFill()
             rendererContext.fill(
                 CGRect(origin: .zero, size: size)
@@ -490,12 +609,6 @@ private enum PDFPageRenderer {
 
             context.restoreGState()
         }
-
-        return ImageEnhancementService.shared.enhance(
-            originalImage,
-            cacheKey: cacheKey,
-            settings: settings
-        )
     }
 }
 
@@ -574,16 +687,15 @@ private final class PDFRenderScheduler {
         }
     }
 
-    /// Оставляет в очереди только страницы текущего окна.
-    func keepPendingRequests(
-        for allowedKeys: Set<String>,
-        prioritizing currentKey: String
-    ) {
+    /// Оставляет в очереди только нужные страницы и выставляет им
+    /// приоритеты в соответствии с направлением чтения.
+    func keepPendingRequests(withPriorities priorities: [String: Int]) {
         var continuations: [Continuation] = []
         var nextJob: Job?
 
         lock.lock()
 
+        let allowedKeys = Set(priorities.keys)
         let keysToRemove = pendingKeys.filter {
             !allowedKeys.contains($0)
         }
@@ -599,10 +711,10 @@ private final class PDFRenderScheduler {
             job.waiters.removeAll()
         }
 
-        // Поднимаем актуальную страницу над устаревшими запросами,
-        // которые всё ещё находятся в допустимом окне.
         for key in pendingKeys {
-            jobs[key]?.priority = (key == currentKey) ? 100 : 10
+            if let priority = priorities[key] {
+                jobs[key]?.priority = priority
+            }
         }
 
         if runningKey == nil {
