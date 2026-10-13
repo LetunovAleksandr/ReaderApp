@@ -33,7 +33,7 @@ final class ImageEnhancementService {
         cache.totalCostLimit = 32 * 1024 * 1024
         cache.countLimit = 3
 
-        // Быстрые превью хранятся отдельно и имеют меньший лимит памяти.
+        // Отдельный небольшой кэш для быстрых превью страниц.
         previewCache.totalCostLimit = 8 * 1024 * 1024
         previewCache.countLimit = 3
 
@@ -59,11 +59,12 @@ final class ImageEnhancementService {
     }
 
     func storePreview(_ image: UIImage, for key: String) {
-        guard let cgImage = image.cgImage else {
-            return
+        let cost: Int
+        if let cgImage = image.cgImage {
+            cost = cgImage.bytesPerRow * cgImage.height
+        } else {
+            cost = Int(image.size.width * image.size.height * 4)
         }
-
-        let cost = cgImage.bytesPerRow * cgImage.height
         previewCache.setObject(image, forKey: key as NSString, cost: cost)
     }
 
@@ -122,6 +123,30 @@ final class ImageEnhancementService {
         }
 
         return result
+    }
+
+    /// Удаляет из кэша страницы этой книги,
+    /// которые больше не входят в заданный диапазон.
+    func trimPDFCache(
+        bookID: UUID,
+        pageCount: Int,
+        keepingPageIndices indices: Set<Int>,
+        settings: ImageEnhancementSettings
+    ) {
+        guard pageCount > 0 else {
+            return
+        }
+
+        for index in 0..<pageCount {
+            guard !indices.contains(index) else {
+                continue
+            }
+
+            let key =
+                "pdf-\(bookID.uuidString)-page-\(index)-1400|\(settings.cacheKey)"
+
+            cache.removeObject(forKey: key as NSString)
+        }
     }
 
     func clearCache() {

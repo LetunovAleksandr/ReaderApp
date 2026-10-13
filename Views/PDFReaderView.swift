@@ -312,12 +312,11 @@ private struct PDFPageView: View {
             height: availableSize.height
         )
         .onChange(of: isCurrentPage) { _, isCurrent in
-            if !isCurrent {
-                // Не удерживаем декодированные изображения всех просмотренных
-                // страниц в состоянии SwiftUI.
-                renderedImage = nil
+            if isCurrent {
                 renderFailed = false
             }
+            // Сохраняем уже показанное изображение при уходе со страницы,
+            // чтобы при возврате не возникало пустого кадра.
         }
         .task(id: "\(isCurrentPage)-\(renderAttempt)") {
             guard isCurrentPage else {
