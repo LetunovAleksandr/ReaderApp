@@ -615,38 +615,39 @@ private enum PDFPageRenderer {
 private final class PDFRenderScheduler {
     static let shared = PDFRenderScheduler()
 
-    private typealias Continuation =
-        CheckedContinuation<UIImage?, Never>
+    private typealias Continuation = CheckedContinuation<UIImage?, Never>
 
     private final class Job {
         let key: String
         var priority: Int
         let work: () -> UIImage?
-
         var waiters: [UUID: Continuation] = [:]
-        var isRunning = false
+        let isPreview: Bool
 
-        init(
-            key: String,
-            priority: Int,
-            work: @escaping () -> UIImage?
-        ) {
+        init(key: String, priority: Int, work: @escaping () -> UIImage?) {
             self.key = key
             self.priority = priority
             self.work = work
+            self.isPreview = key.contains("-preview-600")
         }
     }
 
     private let lock = NSLock()
-
-    private let workerQueue = DispatchQueue(
-        label: "ReaderApp.PDFRenderScheduler",
+    // Превью и полноразмерные страницы обрабатываются независимо.
+    // Тяжёлый полноразмерный рендер больше не блокирует подготовку превью.
+    private let previewQueue = DispatchQueue(
+        label: "ReaderApp.PDFPreviewScheduler",
+        qos: .userInitiated
+    )
+    private let fullQueue = DispatchQueue(
+        label: "ReaderApp.PDFFullRenderScheduler",
         qos: .userInitiated
     )
 
     private var jobs: [String: Job] = [:]
     private var pendingKeys: Set<String> = []
-    private var runningKey: String?
+    private var runningPreviewKey: String?
+    private var runningFullKey: String?
 
     private init() {}
 
@@ -657,55 +658,45 @@ private final class PDFRenderScheduler {
     ) async -> UIImage? {
         await withCheckedContinuation { continuation in
             lock.lock()
-
             let waiterID = UUID()
 
             if let existingJob = jobs[key] {
                 existingJob.waiters[waiterID] = continuation
-
+                if pendingKeys.contains(key) {
+                    existingJob.priority = max(existingJob.priority, priority)
+                }
+                let nextPreview = takeNextJobLocked(isPreview: true)
+                let nextFull = takeNextJobLocked(isPreview: false)
                 lock.unlock()
+                if let nextPreview { start(nextPreview) }
+                if let nextFull { start(nextFull) }
                 return
             }
 
-            let job = Job(
-                key: key,
-                priority: priority,
-                work: work
-            )
-
+            let job = Job(key: key, priority: priority, work: work)
             job.waiters[waiterID] = continuation
             jobs[key] = job
             pendingKeys.insert(key)
 
-            let nextJob = takeNextJobLocked()
-
+            let nextPreview = takeNextJobLocked(isPreview: true)
+            let nextFull = takeNextJobLocked(isPreview: false)
             lock.unlock()
 
-            if let nextJob {
-                start(nextJob)
-            }
+            if let nextPreview { start(nextPreview) }
+            if let nextFull { start(nextFull) }
         }
     }
 
-    /// Оставляет в очереди только нужные страницы и выставляет им
-    /// приоритеты в соответствии с направлением чтения.
     func keepPendingRequests(withPriorities priorities: [String: Int]) {
         var continuations: [Continuation] = []
-        var nextJob: Job?
 
         lock.lock()
-
-        let allowedKeys = Set(priorities.keys)
-        let keysToRemove = pendingKeys.filter {
-            !allowedKeys.contains($0)
-        }
-
+        let keysToRemove = pendingKeys.filter { priorities[$0] == nil }
         for key in keysToRemove {
             guard let job = jobs.removeValue(forKey: key) else {
                 pendingKeys.remove(key)
                 continue
             }
-
             pendingKeys.remove(key)
             continuations.append(contentsOf: job.waiters.values)
             job.waiters.removeAll()
@@ -717,84 +708,66 @@ private final class PDFRenderScheduler {
             }
         }
 
-        if runningKey == nil {
-            nextJob = takeNextJobLocked()
-        }
-
+        let nextPreview = takeNextJobLocked(isPreview: true)
+        let nextFull = takeNextJobLocked(isPreview: false)
         lock.unlock()
 
-        for continuation in continuations {
-            continuation.resume(returning: nil)
-        }
-
-        if let nextJob {
-            start(nextJob)
-        }
+        continuations.forEach { $0.resume(returning: nil) }
+        if let nextPreview { start(nextPreview) }
+        if let nextFull { start(nextFull) }
     }
 
     func cancelAll() {
         var continuations: [Continuation] = []
-
         lock.lock()
 
         for key in pendingKeys {
-            guard let job = jobs.removeValue(forKey: key) else {
-                continue
-            }
+            guard let job = jobs.removeValue(forKey: key) else { continue }
+            continuations.append(contentsOf: job.waiters.values)
+            job.waiters.removeAll()
+        }
+        pendingKeys.removeAll()
 
+        if let key = runningPreviewKey, let job = jobs[key] {
+            continuations.append(contentsOf: job.waiters.values)
+            job.waiters.removeAll()
+        }
+        if let key = runningFullKey, let job = jobs[key] {
             continuations.append(contentsOf: job.waiters.values)
             job.waiters.removeAll()
         }
 
-        pendingKeys.removeAll()
-
-        if let runningKey,
-           let runningJob = jobs[runningKey] {
-            continuations.append(
-                contentsOf: runningJob.waiters.values
-            )
-            runningJob.waiters.removeAll()
-        }
-
         lock.unlock()
-
-        for continuation in continuations {
-            continuation.resume(returning: nil)
-        }
+        continuations.forEach { $0.resume(returning: nil) }
     }
 
-    private func takeNextJobLocked() -> Job? {
-        guard runningKey == nil else {
+    private func takeNextJobLocked(isPreview: Bool) -> Job? {
+        if (isPreview ? runningPreviewKey != nil : runningFullKey != nil) {
             return nil
         }
 
         let nextKey = pendingKeys
+            .filter { jobs[$0]?.isPreview == isPreview }
             .sorted { lhs, rhs in
                 let leftPriority = jobs[lhs]?.priority ?? 0
                 let rightPriority = jobs[rhs]?.priority ?? 0
-
-                if leftPriority == rightPriority {
-                    return lhs < rhs
-                }
-
-                return leftPriority > rightPriority
+                return leftPriority == rightPriority ? lhs < rhs : leftPriority > rightPriority
             }
             .first
 
-        guard let nextKey,
-              let job = jobs[nextKey] else {
-            return nil
-        }
-
+        guard let nextKey, let job = jobs[nextKey] else { return nil }
         pendingKeys.remove(nextKey)
-        runningKey = nextKey
-        job.isRunning = true
-
+        if isPreview {
+            runningPreviewKey = nextKey
+        } else {
+            runningFullKey = nextKey
+        }
         return job
     }
 
     private func start(_ job: Job) {
-        workerQueue.async {
+        let queue = job.isPreview ? previewQueue : fullQueue
+        queue.async {
             let image = job.work()
             self.complete(job: job, image: image)
         }
@@ -802,32 +775,23 @@ private final class PDFRenderScheduler {
 
     private func complete(job: Job, image: UIImage?) {
         var continuations: [Continuation] = []
-        var nextJob: Job?
-
         lock.lock()
 
-        // Не удаляем более новую задачу с таким же ключом.
         if jobs[job.key] === job {
             jobs.removeValue(forKey: job.key)
         }
-
-        if runningKey == job.key {
-            runningKey = nil
-        }
+        if runningPreviewKey == job.key { runningPreviewKey = nil }
+        if runningFullKey == job.key { runningFullKey = nil }
 
         continuations = Array(job.waiters.values)
         job.waiters.removeAll()
 
-        nextJob = takeNextJobLocked()
-
+        let nextPreview = takeNextJobLocked(isPreview: true)
+        let nextFull = takeNextJobLocked(isPreview: false)
         lock.unlock()
 
-        for continuation in continuations {
-            continuation.resume(returning: image)
-        }
-
-        if let nextJob {
-            start(nextJob)
-        }
+        continuations.forEach { $0.resume(returning: image) }
+        if let nextPreview { start(nextPreview) }
+        if let nextFull { start(nextFull) }
     }
 }
