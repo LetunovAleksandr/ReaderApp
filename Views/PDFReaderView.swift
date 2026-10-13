@@ -233,9 +233,9 @@ struct PDFReaderView: View {
         }
 
         let candidates: [(index: Int, previewPriority: Int, fullPriority: Int)] = [
-            (page, 120, 110),
-            (page + direction, 100, 90),
-            (page + direction * 2, 80, 70)
+            (page, 120, 60),
+            (page + direction, 115, 45),
+            (page + direction * 2, 100, 30)
         ]
 
         var priorities: [String: Int] = [:]
@@ -395,7 +395,7 @@ private struct PDFPageView: View {
         // когда рендеринг закончится, без индикатора поверх страницы.
         let image = await PDFRenderScheduler.shared.render(
             key: cacheKey,
-            priority: 110
+            priority: 60
         ) {
             PDFPageRenderer.render(
                 page: page,
@@ -422,8 +422,8 @@ private struct PDFPageView: View {
     /// Полные изображения ставим в очередь после превью.
     private func prefetchAdjacentPages() {
         let candidates = [
-            (pageIndex + prefetchDirection, 100, 90),
-            (pageIndex + prefetchDirection * 2, 80, 70)
+            (pageIndex + prefetchDirection, 115, 45),
+            (pageIndex + prefetchDirection * 2, 100, 30)
         ].filter {
             $0.0 >= 0 && $0.0 < document.pageCount
         }
