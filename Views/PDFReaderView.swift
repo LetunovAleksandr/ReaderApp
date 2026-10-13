@@ -76,7 +76,7 @@ struct PDFReaderView: View {
                             document: document,
                             bookID: book.id,
                             pageIndex: index,
-                            currentPage: currentPage,
+                            isCurrentPage: index == currentPage,
                             settings: enhancementSettings,
                             availableSize: geometry.size
                         )
@@ -216,7 +216,15 @@ struct PDFReaderView: View {
             }
         )
 
-        PDFRenderScheduler.shared.keepPendingRequests(for: keys)
+        let currentKey = PDFPageRenderer.cacheKey(
+            bookID: book.id,
+            pageIndex: page
+        )
+
+        PDFRenderScheduler.shared.keepPendingRequests(
+            for: keys,
+            prioritizing: currentKey
+        )
 
         ImageEnhancementService.shared.trimPDFCache(
             bookID: book.id,
@@ -231,18 +239,20 @@ private struct PDFPageView: View {
     let document: PDFDocument
     let bookID: UUID
     let pageIndex: Int
-    let currentPage: Int
+    let isCurrentPage: Bool
     let settings: ImageEnhancementSettings
     let availableSize: CGSize
 
     @State private var renderedImage: UIImage?
+    @State private var isRendering = false
+    @State private var renderFailed = false
+    @State private var renderAttempt = 0
 
-    private var distance: Int {
-        abs(pageIndex - currentPage)
-    }
-
-    private var shouldRender: Bool {
-        distance <= 1
+    private var cacheKey: String {
+        PDFPageRenderer.cacheKey(
+            bookID: bookID,
+            pageIndex: pageIndex
+        )
     }
 
     var body: some View {
@@ -257,7 +267,20 @@ private struct PDFPageView: View {
                         width: availableSize.width,
                         height: availableSize.height
                     )
-            } else if pageIndex == currentPage {
+            } else if isCurrentPage && renderFailed {
+                VStack(spacing: 12) {
+                    Text("Не удалось загрузить страницу")
+                        .font(.footnote)
+                        .foregroundStyle(.white)
+
+                    Button("Повторить") {
+                        renderFailed = false
+                        renderAttempt += 1
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.white)
+                }
+            } else if isCurrentPage {
                 ProgressView()
                     .tint(.white)
             }
@@ -266,9 +289,8 @@ private struct PDFPageView: View {
             width: availableSize.width,
             height: availableSize.height
         )
-        .task(id: distance) {
-            guard shouldRender else {
-                renderedImage = nil
+        .task(id: "\(isCurrentPage)-\(renderAttempt)") {
+            guard isCurrentPage else {
                 return
             }
 
@@ -278,18 +300,14 @@ private struct PDFPageView: View {
 
     @MainActor
     private func renderPageIfNeeded() async {
-        guard shouldRender,
-              renderedImage == nil else {
+        guard isCurrentPage, renderedImage == nil else {
             return
         }
 
-        let key = PDFPageRenderer.cacheKey(
-            bookID: bookID,
-            pageIndex: pageIndex
-        )
+        renderFailed = false
 
         if let cached = ImageEnhancementService.shared.cachedImage(
-            for: key,
+            for: cacheKey,
             settings: settings
         ) {
             renderedImage = cached
@@ -297,18 +315,19 @@ private struct PDFPageView: View {
         }
 
         guard let page = document.page(at: pageIndex) else {
+            renderFailed = true
             return
         }
 
         let bounds = page.bounds(for: .mediaBox)
 
-        guard bounds.width > 0,
-              bounds.height > 0 else {
+        guard bounds.width > 0, bounds.height > 0 else {
+            renderFailed = true
             return
         }
 
-        let maxDimension: CGFloat = 1400
         let aspectRatio = bounds.width / bounds.height
+        let maxDimension: CGFloat = 1400
 
         let size: CGSize
 
@@ -324,36 +343,42 @@ private struct PDFPageView: View {
             )
         }
 
+        isRendering = true
+        defer {
+            isRendering = false
+        }
+
         let image = await PDFRenderScheduler.shared.render(
-            key: key,
-            priority: distance == 0 ? 0 : 1
+            key: cacheKey,
+            priority: 100
         ) {
-            PDFPageRenderer.renderSynchronously(
+            PDFPageRenderer.render(
                 page: page,
                 size: size,
-                cacheKey: key,
+                cacheKey: cacheKey,
                 settings: settings
             )
         }
 
-        guard !Task.isCancelled,
-              shouldRender else {
+        guard !Task.isCancelled, isCurrentPage else {
             return
         }
 
-        renderedImage = image
+        if let image {
+            renderedImage = image
+            renderFailed = false
+        } else {
+            renderFailed = true
+        }
     }
 }
 
 private enum PDFPageRenderer {
-    static func cacheKey(
-        bookID: UUID,
-        pageIndex: Int
-    ) -> String {
+    static func cacheKey(bookID: UUID, pageIndex: Int) -> String {
         "pdf-\(bookID.uuidString)-page-\(pageIndex)-1400"
     }
 
-    nonisolated static func renderSynchronously(
+    nonisolated static func render(
         page: PDFPage,
         size: CGSize,
         cacheKey: String,
@@ -369,7 +394,9 @@ private enum PDFPageRenderer {
         let bounds = page.bounds(for: .mediaBox)
 
         guard bounds.width > 0,
-              bounds.height > 0 else {
+              bounds.height > 0,
+              size.width > 0,
+              size.height > 0 else {
             return nil
         }
 
@@ -377,25 +404,18 @@ private enum PDFPageRenderer {
 
         let originalImage = renderer.image { rendererContext in
             UIColor.white.setFill()
-
             rendererContext.fill(
                 CGRect(origin: .zero, size: size)
             )
 
             let context = rendererContext.cgContext
-
             context.saveGState()
 
-            context.translateBy(
-                x: 0,
-                y: size.height
-            )
-
+            context.translateBy(x: 0, y: size.height)
             context.scaleBy(
                 x: size.width / bounds.width,
                 y: -size.height / bounds.height
             )
-
             context.translateBy(
                 x: -bounds.minX,
                 y: -bounds.minY
@@ -417,67 +437,41 @@ private enum PDFPageRenderer {
     }
 }
 
-private final class PDFRenderRequest {
-    let key: String
-    let priority: Int
-    let work: () -> UIImage?
-
-    private let lock = NSLock()
-    private var continuation: CheckedContinuation<UIImage?, Never>?
-    private var completed = false
-
-    var operation: Operation?
-
-    init(
-        key: String,
-        priority: Int,
-        work: @escaping () -> UIImage?,
-        continuation: CheckedContinuation<UIImage?, Never>
-    ) {
-        self.key = key
-        self.priority = priority
-        self.work = work
-        self.continuation = continuation
-    }
-
-    func finish(_ image: UIImage?) {
-        lock.lock()
-
-        guard !completed else {
-            lock.unlock()
-            return
-        }
-
-        completed = true
-        let continuation = self.continuation
-        self.continuation = nil
-
-        lock.unlock()
-
-        continuation?.resume(returning: image)
-    }
-
-    func cancel() {
-        operation?.cancel()
-        finish(nil)
-    }
-}
-
 private final class PDFRenderScheduler {
     static let shared = PDFRenderScheduler()
 
+    private typealias Continuation =
+        CheckedContinuation<UIImage?, Never>
+
+    private final class Job {
+        let key: String
+        var priority: Int
+        let work: () -> UIImage?
+
+        var waiters: [UUID: Continuation] = [:]
+        var isRunning = false
+
+        init(
+            key: String,
+            priority: Int,
+            work: @escaping () -> UIImage?
+        ) {
+            self.key = key
+            self.priority = priority
+            self.work = work
+        }
+    }
+
     private let lock = NSLock()
 
-    private let queue: OperationQueue = {
-        let queue = OperationQueue()
-        queue.name = "ReaderApp.PDFRenderQueue"
-        queue.maxConcurrentOperationCount = 1
-        queue.qualityOfService = .userInitiated
-        return queue
-    }()
+    private let workerQueue = DispatchQueue(
+        label: "ReaderApp.PDFRenderScheduler",
+        qos: .userInitiated
+    )
 
-    private var pending: [String: PDFRenderRequest] = [:]
-    private var runningKeys = Set<String>()
+    private var jobs: [String: Job] = [:]
+    private var pendingKeys: Set<String> = []
+    private var runningKey: String?
 
     private init() {}
 
@@ -486,129 +480,180 @@ private final class PDFRenderScheduler {
         priority: Int,
         work: @escaping () -> UIImage?
     ) async -> UIImage? {
-        await withTaskCancellationHandler {
-            await withCheckedContinuation { continuation in
-                let request = PDFRenderRequest(
-                    key: key,
-                    priority: priority,
-                    work: work,
-                    continuation: continuation
-                )
+        await withCheckedContinuation { continuation in
+            lock.lock()
 
-                lock.lock()
+            let waiterID = UUID()
 
-                if let existing = pending[key] {
-                    lock.unlock()
-                    existing.cancel()
-                    enqueue(request)
-                    return
-                }
+            if let existingJob = jobs[key] {
+                existingJob.waiters[waiterID] = continuation
 
-                if runningKeys.contains(key) {
-                    lock.unlock()
-                    request.finish(nil)
-                    return
-                }
-
-                pending[key] = request
                 lock.unlock()
-
-                enqueueOperation(for: request)
-            }
-        } onCancel: {
-            self.cancel(key: key)
-        }
-    }
-
-    private func enqueue(_ request: PDFRenderRequest) {
-        lock.lock()
-        pending[request.key] = request
-        lock.unlock()
-
-        enqueueOperation(for: request)
-    }
-
-    private func enqueueOperation(for request: PDFRenderRequest) {
-        let operation = BlockOperation { [weak self, weak request] in
-            guard let self,
-                  let request else {
                 return
             }
 
-            self.lock.lock()
+            let job = Job(
+                key: key,
+                priority: priority,
+                work: work
+            )
 
-            let isCurrent = self.pending[request.key] === request
+            job.waiters[waiterID] = continuation
+            jobs[key] = job
+            pendingKeys.insert(key)
 
-            if isCurrent {
-                self.pending.removeValue(forKey: request.key)
-                self.runningKeys.insert(request.key)
+            let nextJob = takeNextJobLocked()
+
+            lock.unlock()
+
+            if let nextJob {
+                start(nextJob)
             }
-
-            self.lock.unlock()
-
-            guard isCurrent, !request.operation!.isCancelled else {
-                request.finish(nil)
-                return
-            }
-
-            let image = request.work()
-            request.finish(image)
-
-            self.lock.lock()
-            self.runningKeys.remove(request.key)
-            self.lock.unlock()
-        }
-
-        operation.queuePriority = request.priority == 0 ? .veryHigh : .normal
-        request.operation = operation
-
-        lock.lock()
-        let stillPending = pending[request.key] === request
-        lock.unlock()
-
-        if stillPending {
-            queue.addOperation(operation)
-        } else {
-            request.cancel()
         }
     }
 
-    func cancel(key: String) {
+    /// Оставляет в очереди только страницы текущего окна.
+    func keepPendingRequests(
+        for allowedKeys: Set<String>,
+        prioritizing currentKey: String
+    ) {
+        var continuations: [Continuation] = []
+        var nextJob: Job?
+
         lock.lock()
-        let request = pending.removeValue(forKey: key)
-        lock.unlock()
 
-        request?.cancel()
-    }
-
-    func keepPendingRequests(for keys: Set<String>) {
-        lock.lock()
-
-        let obsolete = pending.values.filter {
-            !keys.contains($0.key)
+        let keysToRemove = pendingKeys.filter {
+            !allowedKeys.contains($0)
         }
 
-        for request in obsolete {
-            pending.removeValue(forKey: request.key)
+        for key in keysToRemove {
+            guard let job = jobs.removeValue(forKey: key) else {
+                pendingKeys.remove(key)
+                continue
+            }
+
+            pendingKeys.remove(key)
+            continuations.append(contentsOf: job.waiters.values)
+            job.waiters.removeAll()
+        }
+
+        // Поднимаем актуальную страницу над устаревшими запросами,
+        // которые всё ещё находятся в допустимом окне.
+        for key in pendingKeys {
+            jobs[key]?.priority = (key == currentKey) ? 100 : 10
+        }
+
+        if runningKey == nil {
+            nextJob = takeNextJobLocked()
         }
 
         lock.unlock()
 
-        obsolete.forEach {
-            $0.cancel()
+        for continuation in continuations {
+            continuation.resume(returning: nil)
+        }
+
+        if let nextJob {
+            start(nextJob)
         }
     }
 
     func cancelAll() {
+        var continuations: [Continuation] = []
+
         lock.lock()
 
-        let requests = Array(pending.values)
-        pending.removeAll()
+        for key in pendingKeys {
+            guard let job = jobs.removeValue(forKey: key) else {
+                continue
+            }
+
+            continuations.append(contentsOf: job.waiters.values)
+            job.waiters.removeAll()
+        }
+
+        pendingKeys.removeAll()
+
+        if let runningKey,
+           let runningJob = jobs[runningKey] {
+            continuations.append(
+                contentsOf: runningJob.waiters.values
+            )
+            runningJob.waiters.removeAll()
+        }
 
         lock.unlock()
 
-        requests.forEach {
-            $0.cancel()
+        for continuation in continuations {
+            continuation.resume(returning: nil)
+        }
+    }
+
+    private func takeNextJobLocked() -> Job? {
+        guard runningKey == nil else {
+            return nil
+        }
+
+        let nextKey = pendingKeys
+            .sorted { lhs, rhs in
+                let leftPriority = jobs[lhs]?.priority ?? 0
+                let rightPriority = jobs[rhs]?.priority ?? 0
+
+                if leftPriority == rightPriority {
+                    return lhs < rhs
+                }
+
+                return leftPriority > rightPriority
+            }
+            .first
+
+        guard let nextKey,
+              let job = jobs[nextKey] else {
+            return nil
+        }
+
+        pendingKeys.remove(nextKey)
+        runningKey = nextKey
+        job.isRunning = true
+
+        return job
+    }
+
+    private func start(_ job: Job) {
+        workerQueue.async {
+            let image = job.work()
+            self.complete(job: job, image: image)
+        }
+    }
+
+    private func complete(job: Job, image: UIImage?) {
+        var continuations: [Continuation] = []
+        var nextJob: Job?
+
+        lock.lock()
+
+        // Не удаляем более новую задачу с таким же ключом.
+        if jobs[job.key] === job {
+            jobs.removeValue(forKey: job.key)
+        }
+
+        if runningKey == job.key {
+            runningKey = nil
+        }
+
+        continuations = Array(job.waiters.values)
+        job.waiters.removeAll()
+
+        nextJob = takeNextJobLocked()
+
+        lock.unlock()
+
+        for continuation in continuations {
+            continuation.resume(returning: image)
+        }
+
+        if let nextJob {
+            start(nextJob)
         }
     }
 }
